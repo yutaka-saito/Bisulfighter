@@ -1,19 +1,13 @@
-// ComMet
-// by National Institute of Advanced Industrial Science and Technology (AIST)
-// is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
-// http://creativecommons.org/licenses/by-nc-sa/3.0/
-
-
 #include <iostream>
 #include <queue>
 #include <cassert>
 
-#include "SlimNaiveModel.h"
+#include "SlimNaiveModel.hh"
 
 using namespace std;
 
 void SlimNaiveModel::
-reset_param(const MethylList& met, ValueType alpha)
+reset_param(const MethylList& met, const GlobalStatistics& gstat)
 {
   // InitProb
   InitProb.resize(NCPGState, Log(1.0 / NCPGState));
@@ -27,50 +21,54 @@ reset_param(const MethylList& met, ValueType alpha)
   const float f =      0.1 * (1.0 - Snc) / 2;
   const float g =      0.1;
   const float h =      0.1;
-  TransProb[CPG_UP][GAP_UP] =              Log(1.0 - g); 
-  TransProb[CPG_UP][GAP_NOCHANGE] =        Log(g); 
-  TransProb[CPG_DOWN][GAP_DOWN] =          Log(1.0 - h);
-  TransProb[CPG_DOWN][GAP_NOCHANGE] =      Log(h);
-  TransProb[CPG_NOCHANGE][GAP_NOCHANGE] =  Log(1.0);
-  TransProb[GAP_UP][CPG_UP] =              Log(1.0 - Sup);
-  TransProb[GAP_UP][GAP_UP] =              Log(Sup);
-  TransProb[GAP_DOWN][CPG_DOWN] =          Log(1.0 - Sdown);
-  TransProb[GAP_DOWN][GAP_DOWN] =          Log(Sdown);
-  TransProb[GAP_NOCHANGE][CPG_UP] =        Log(e);
-  TransProb[GAP_NOCHANGE][CPG_DOWN] =      Log(f);
-  TransProb[GAP_NOCHANGE][CPG_NOCHANGE] =  Log(1.0 - e - f - Snc);
-  TransProb[GAP_NOCHANGE][GAP_NOCHANGE] =  Log(Snc);
+  const float Scom =   Snc;
+  const float t =      0.25;
+  if (noncpg_) {
+    TransProb[CPG_UP][CPG_UP] =              Log(t / 3); 
+    TransProb[CPG_UP][CPG_DOWN] =            Log(t / 3); 
+    TransProb[CPG_UP][CPG_NOCHANGE] =        Log(t / 3); 
+    TransProb[CPG_UP][GAP_UP] =              Log(1.0 - g - t); 
+    TransProb[CPG_UP][GAP_NOCHANGE] =        Log(g);
+    TransProb[CPG_DOWN][CPG_UP] =            Log(t / 3); 
+    TransProb[CPG_DOWN][CPG_DOWN] =          Log(t / 3); 
+    TransProb[CPG_DOWN][CPG_NOCHANGE] =      Log(t / 3); 
+    TransProb[CPG_DOWN][GAP_DOWN] =          Log(1.0 - h - t); 
+    TransProb[CPG_DOWN][GAP_NOCHANGE] =      Log(h);
+    TransProb[CPG_NOCHANGE][CPG_UP] =        Log(t / 3);
+    TransProb[CPG_NOCHANGE][CPG_DOWN] =      Log(t / 3);
+    TransProb[CPG_NOCHANGE][CPG_NOCHANGE] =  Log(t / 3);
+    TransProb[CPG_NOCHANGE][GAP_NOCHANGE] =  Log(1.0 - t);
+    TransProb[GAP_UP][CPG_UP] =              Log(1.0 - Scom);
+    TransProb[GAP_UP][GAP_UP] =              Log(Scom);
+    TransProb[GAP_DOWN][CPG_DOWN] =          Log(1.0 - Scom);
+    TransProb[GAP_DOWN][GAP_DOWN] =          Log(Scom);
+    TransProb[GAP_NOCHANGE][CPG_UP] =        Log(e);
+    TransProb[GAP_NOCHANGE][CPG_DOWN] =      Log(f);
+    TransProb[GAP_NOCHANGE][CPG_NOCHANGE] =  Log(1.0 - e - f - Scom);
+    TransProb[GAP_NOCHANGE][GAP_NOCHANGE] =  Log(Scom);
+  }
+  else {
+    TransProb[CPG_UP][GAP_UP] =              Log(1.0 - g); 
+    TransProb[CPG_UP][GAP_NOCHANGE] =        Log(g); 
+    TransProb[CPG_DOWN][GAP_DOWN] =          Log(1.0 - h);
+    TransProb[CPG_DOWN][GAP_NOCHANGE] =      Log(h);
+    TransProb[CPG_NOCHANGE][GAP_NOCHANGE] =  Log(1.0);
+    TransProb[GAP_UP][CPG_UP] =              Log(1.0 - Sup);
+    TransProb[GAP_UP][GAP_UP] =              Log(Sup);
+    TransProb[GAP_DOWN][CPG_DOWN] =          Log(1.0 - Sdown);
+    TransProb[GAP_DOWN][GAP_DOWN] =          Log(Sdown);
+    TransProb[GAP_NOCHANGE][CPG_UP] =        Log(e);
+    TransProb[GAP_NOCHANGE][CPG_DOWN] =      Log(f);
+    TransProb[GAP_NOCHANGE][CPG_NOCHANGE] =  Log(1.0 - e - f - Snc);
+    TransProb[GAP_NOCHANGE][GAP_NOCHANGE] =  Log(Snc);
+  }
 
   // EmitProb
   EmitProb.resize(NCPGState, vector<ValueType>(dpsize_, NEG_INF));
   for (uint i=0; i!=dpsize_; ++i) {
-    // maximum-likelihood estimates for binomial distributions
-    uint m1 = met.mc_[0][i];
-    uint u1 = met.uc_[0][i];
-    uint m2 = met.mc_[1][i];
-    uint u2 = met.uc_[1][i];
-
-    // pseudocount regularizer
-    const float pseudo = alpha;
-    ValueType q1up = (ValueType) (m1 + pseudo) / (m1 + pseudo + u1); 
-    ValueType q1down = (ValueType) m1 / (m1 + u1 + pseudo); 
-    ValueType q2up = (ValueType) m2 / (m2 + u2 + pseudo); 
-    ValueType q2down = (ValueType) (m2 + pseudo) / (m2 + pseudo + u2); 
-    ValueType q0 = (ValueType) (m1 + m2) / (m1 + u1 + m2 + u2);
-    ValueType pup = log_binom(m1, u1, q1up) + log_binom(m2, u2, q2up);
-    ValueType pdown = log_binom(m1, u1, q1down) + log_binom(m2, u2, q2down);
-    ValueType pnochange = log_binom(m1, u1, q0) + log_binom(m2, u2, q0);
-
-    /* 
-    // empirical regularizer
-    ValueType q1 = (ValueType) m1 / (m1 + u1); 
-    ValueType q2 = (ValueType) m2 / (m2 + u2);
-    ValueType q0 = (ValueType) (m1 + m2) / (m1 + u1 + m2 + u2);
-    ValueType pchange = log_binom(m1, u1, q1) + log_binom(m2, u2, q2);
-    ValueType pup = pchange + log_beta(q1 - q2, alpha);
-    ValueType pdown = pchange + log_beta(q2 - q1, alpha);
-    ValueType pnochange = log_binom(m1, u1, q0) + log_binom(m2, u2, q0) + log_beta(1.0, alpha);
-    */
+    ValueType pup = gstat.pup(met, i); 
+    ValueType pdown = gstat.pdown(met, i); 
+    ValueType pnochange = gstat.pnochange(met, i); 
 
     EmitProb[CPG_UP][i] = pup;
     EmitProb[CPG_DOWN][i] = pdown;
@@ -80,9 +78,12 @@ reset_param(const MethylList& met, ValueType alpha)
 
   // TransProbDist
   TransProbDist.resize(NGAPState, vector<ValueType>(dpsize_-1, NEG_INF));
-  for (uint i=0; i!=dpsize_-1; ++i) 
-    for (uint j=NCPGState; j!=NState; ++j) 
-      TransProbDist[j-NCPGState][i] = (Dist[i] - 2) * TransProb[j][j];
+  for (uint i=0; i!=dpsize_-1; ++i) {
+    for (uint j=NCPGState; j!=NState; ++j) {
+      if (Dist[i] == 1) TransProbDist[j-NCPGState][i] = NEG_INF;
+      else TransProbDist[j-NCPGState][i] = (Dist[i] - 2) * TransProb[j][j];   
+    }
+  }
 }
 
 void SlimNaiveModel::
@@ -91,16 +92,18 @@ dbase(std::ofstream& ofs, const MethylList& met)
   assert(flg_ppr_);
 
   for (uint i=0; i!=dpsize_; ++i) {
-    uint m1 = met.mc_[0][i];
-    uint u1 = met.uc_[0][i];
-    uint m2 = met.mc_[1][i];
-    uint u2 = met.uc_[1][i];
-    ValueType s1 = (ValueType) m1 / (m1 + u1); 
-    ValueType s2 = (ValueType) m2 / (m2 + u2);
-
-    ofs << met.name_ << "\t" << met.pos_[i] << "\t" << s1 << "\t" << s2;
+    double theta1 = 0.0;
+    double theta2 = 0.0;
+    for (uint r=0; r!=met.mc1_[i].size(); ++r) 
+      theta1 += met.mc1_[i][r] / met.nc1_[i][r];
+    for (uint r=0; r!=met.mc2_[i].size(); ++r) 
+      theta2 += met.mc2_[i][r] / met.nc2_[i][r];
+    theta1 /= met.mc1_[i].size();
+    theta2 /= met.mc2_[i].size();
+    ofs << met.name_ << "\t" << met.pos_[i] 
+	<< "\t" << formatval("%.8f", theta1) << "\t" << formatval("%.8f", theta2);
     for (uint j=0; j!=NCPGState; ++j) 
-      ofs << "\t" << ppr_[j][i];
+      ofs << "\t" << formatval("%.8e", ppr_[j][i]);
     ofs << endl; 
   }
 }
@@ -166,6 +169,7 @@ dregion_pdecode(std::ofstream& ofs, const MethylList& met)
   dregion(ofs, met, path_pdc_);
 }
 
+
 // compute log P(DMR|UP) / ( P(DMR|NC) + P(DMR|DOWN) ) 
 void SlimNaiveModel::
 dregion_ratio(std::ofstream& ofs, const MethylList& met, ValueType thsh) 
@@ -174,11 +178,14 @@ dregion_ratio(std::ofstream& ofs, const MethylList& met, ValueType thsh)
   vector<ValueType> tbl_up(dpsize_); 
   vector<ValueType> tbl_down(dpsize_); 
   vector<ValueType> tbl_nc(dpsize_); 
-  deque<bool> trc_tbl(dpsize_); // true if DMR was extended
-  deque<bool> trc_msk(dpsize_, false); // true if cells were masked
+  //deque<bool> trc_tbl(dpsize_); // true if DMR was extended
+  //deque<bool> trc_msk(dpsize_, false); // true if cells were masked
+  vector<bool> trc_tbl(dpsize_); // true if DMR was extended
+  vector<bool> trc_msk(dpsize_); // true if cells were masked
   bool allmsk;
 
   // UP DMR
+  trc_msk.assign(dpsize_, false);
   while (true) { // each time find the best path  
     tbl.assign(dpsize_, NEG_INF);
     tbl.assign(dpsize_, NEG_INF);
@@ -190,10 +197,17 @@ dregion_ratio(std::ofstream& ofs, const MethylList& met, ValueType thsh)
 
     if (! trc_msk[0]) {
       allmsk = false;
+      bool cpc = (Dist[0] == 1) ? true : false;
       tbl_up[0] = TransProb[GAP_NOCHANGE][CPG_UP] + EmitProb[CPG_UP][0];
       tbl_down[0] = TransProb[GAP_NOCHANGE][CPG_DOWN] + EmitProb[CPG_DOWN][0];
       tbl_nc[0] = TransProb[GAP_NOCHANGE][CPG_NOCHANGE] + EmitProb[CPG_NOCHANGE][0];
-      tbl[0] = tbl_up[0] + TransProb[CPG_UP][GAP_NOCHANGE] 
+      if (cpc) tbl[0] = tbl_up[0] + Fast_LogAdd(TransProb[CPG_UP][CPG_DOWN], 
+						TransProb[CPG_UP][CPG_NOCHANGE]) 
+	- Fast_LogAdd(tbl_down[0] + Fast_LogAdd(TransProb[CPG_DOWN][CPG_UP], 
+						TransProb[CPG_DOWN][CPG_NOCHANGE]), 
+		      tbl_nc[0] + Fast_LogAdd(TransProb[CPG_NOCHANGE][CPG_UP], 
+					      TransProb[CPG_NOCHANGE][CPG_DOWN]));
+      else tbl[0] = tbl_up[0] + TransProb[CPG_UP][GAP_NOCHANGE] 
 	- Fast_LogAdd(tbl_down[0] + TransProb[CPG_DOWN][GAP_NOCHANGE], 
 		      tbl_nc[0] + TransProb[CPG_NOCHANGE][GAP_NOCHANGE]);
     }
@@ -201,24 +215,59 @@ dregion_ratio(std::ofstream& ofs, const MethylList& met, ValueType thsh)
       if (trc_msk[i]) continue;
       else allmsk = false;
       uint d = Dist[i-1];
-      ValueType val_up = TransProb[CPG_UP][GAP_UP] 
-	+ (d - 2) *  TransProb[GAP_UP][GAP_UP] 
-	+ TransProb[GAP_UP][CPG_UP] + EmitProb[CPG_UP][i];
-      ValueType val_down = TransProb[CPG_DOWN][GAP_DOWN] 
-	+ (d - 2) *  TransProb[GAP_DOWN][GAP_DOWN] 
-	+ TransProb[GAP_DOWN][CPG_DOWN] + EmitProb[CPG_DOWN][i];
-      ValueType val_nc = TransProb[CPG_NOCHANGE][GAP_NOCHANGE] 
-	+ (d - 2) * TransProb[GAP_NOCHANGE][GAP_NOCHANGE] 
-	+ TransProb[GAP_NOCHANGE][CPG_NOCHANGE] + EmitProb[CPG_NOCHANGE][i];
-      ValueType val = tbl_up[i-1] + val_up + TransProb[CPG_UP][GAP_NOCHANGE] 
-	- Fast_LogAdd(tbl_down[i-1] + val_down + TransProb[CPG_DOWN][GAP_NOCHANGE], 
-		      tbl_nc[i-1] + val_nc + TransProb[CPG_NOCHANGE][GAP_NOCHANGE]);
-      ValueType v_up = TransProb[GAP_NOCHANGE][CPG_UP] + EmitProb[CPG_UP][i];
-      ValueType v_down = TransProb[GAP_NOCHANGE][CPG_DOWN] + EmitProb[CPG_DOWN][i];
-      ValueType v_nc = TransProb[GAP_NOCHANGE][CPG_NOCHANGE] + EmitProb[CPG_NOCHANGE][i];
-      ValueType v = v_up + TransProb[CPG_UP][GAP_NOCHANGE] 
-	- Fast_LogAdd(v_down + TransProb[CPG_DOWN][GAP_NOCHANGE], 
-		      v_nc + TransProb[CPG_NOCHANGE][GAP_NOCHANGE]);
+      bool cpc = (i != dpsize_ - 1 && Dist[i] == 1) ? true : false;
+      ValueType val, val_up, val_down, val_nc; // DMR extended
+      ValueType v, v_up, v_down, v_nc; // DMR opened
+      if (d == 1) {
+	val_up = TransProb[CPG_UP][CPG_UP] + EmitProb[CPG_UP][i];
+	val_down = TransProb[CPG_DOWN][CPG_DOWN] + EmitProb[CPG_DOWN][i];
+	val_nc = TransProb[CPG_NOCHANGE][CPG_NOCHANGE] + EmitProb[CPG_NOCHANGE][i];
+	v_up = Fast_LogAdd(TransProb[CPG_DOWN][CPG_UP], 
+			   TransProb[CPG_NOCHANGE][CPG_UP]) 
+	  + EmitProb[CPG_UP][i];
+	v_down = Fast_LogAdd(TransProb[CPG_UP][CPG_DOWN], 
+			     TransProb[CPG_NOCHANGE][CPG_DOWN]) 
+	  + EmitProb[CPG_DOWN][i];
+	v_nc = Fast_LogAdd(TransProb[CPG_UP][CPG_NOCHANGE], 
+			   TransProb[CPG_DOWN][CPG_NOCHANGE]) 
+	  + EmitProb[CPG_NOCHANGE][i];
+      }
+      else {
+	val_up = TransProb[CPG_UP][GAP_UP] 
+	  + (d - 2) *  TransProb[GAP_UP][GAP_UP] 
+	  + TransProb[GAP_UP][CPG_UP] + EmitProb[CPG_UP][i];
+	val_down = TransProb[CPG_DOWN][GAP_DOWN] 
+	  + (d - 2) *  TransProb[GAP_DOWN][GAP_DOWN] 
+	  + TransProb[GAP_DOWN][CPG_DOWN] + EmitProb[CPG_DOWN][i];
+	val_nc = TransProb[CPG_NOCHANGE][GAP_NOCHANGE] 
+	  + (d - 2) * TransProb[GAP_NOCHANGE][GAP_NOCHANGE] 
+	  + TransProb[GAP_NOCHANGE][CPG_NOCHANGE] + EmitProb[CPG_NOCHANGE][i];
+	v_up = TransProb[GAP_NOCHANGE][CPG_UP] + EmitProb[CPG_UP][i];
+	v_down = TransProb[GAP_NOCHANGE][CPG_DOWN] + EmitProb[CPG_DOWN][i];
+	v_nc = TransProb[GAP_NOCHANGE][CPG_NOCHANGE] + EmitProb[CPG_NOCHANGE][i];
+      }
+      if (cpc) {
+	val = tbl_up[i-1] + val_up + Fast_LogAdd(TransProb[CPG_UP][CPG_DOWN], 
+						 TransProb[CPG_UP][CPG_NOCHANGE])
+	  - Fast_LogAdd(tbl_down[i-1] + val_down + Fast_LogAdd(TransProb[CPG_DOWN][CPG_UP], 
+							       TransProb[CPG_DOWN][CPG_NOCHANGE]), 
+			tbl_nc[i-1] + val_nc + Fast_LogAdd(TransProb[CPG_NOCHANGE][CPG_UP], 
+							   TransProb[CPG_NOCHANGE][CPG_DOWN])); 
+	v = v_up + Fast_LogAdd(TransProb[CPG_UP][CPG_DOWN], 
+			       TransProb[CPG_UP][CPG_NOCHANGE]) 
+	  - Fast_LogAdd(v_down + Fast_LogAdd(TransProb[CPG_DOWN][CPG_UP], 
+					     TransProb[CPG_DOWN][CPG_NOCHANGE]), 
+			v_nc + Fast_LogAdd(TransProb[CPG_NOCHANGE][CPG_UP], 
+					   TransProb[CPG_NOCHANGE][CPG_DOWN]));
+      } 
+      else {
+	val = tbl_up[i-1] + val_up + TransProb[CPG_UP][GAP_NOCHANGE] 
+	  - Fast_LogAdd(tbl_down[i-1] + val_down + TransProb[CPG_DOWN][GAP_NOCHANGE], 
+			tbl_nc[i-1] + val_nc + TransProb[CPG_NOCHANGE][GAP_NOCHANGE]);
+	v = v_up + TransProb[CPG_UP][GAP_NOCHANGE] 
+	  - Fast_LogAdd(v_down + TransProb[CPG_DOWN][GAP_NOCHANGE], 
+			v_nc + TransProb[CPG_NOCHANGE][GAP_NOCHANGE]);
+      }
       if (val > v && (! trc_msk[i-1])) { // extension from masked region is not allowed 
 	tbl[i] = val;
 	tbl_up[i] = tbl_up[i-1] + val_up;
@@ -247,14 +296,13 @@ dregion_ratio(std::ofstream& ofs, const MethylList& met, ValueType thsh)
     for (idx=jdx; trc_tbl[idx]; --idx);
     if (idx != jdx) {
       ofs << met.name_ << "\t" << met.pos_[idx] << "\t" << met.pos_[jdx]+1 
-	  << "\tUP\t" << max << endl;
+	  << "\tUP\t" << max << "\t" << max / (met.pos_[jdx] - met.pos_[idx] + 1) << endl;
     }
     for (uint i=idx; i<=jdx; ++i) trc_msk[i] = true;
   }
 
-  trc_msk.assign(dpsize_, false);
-
   // DOWN DMR
+  trc_msk.assign(dpsize_, false);
   while (true) { // each time find the best path  
     tbl.assign(dpsize_, NEG_INF);
     tbl_up.assign(dpsize_, NEG_INF);
@@ -265,10 +313,17 @@ dregion_ratio(std::ofstream& ofs, const MethylList& met, ValueType thsh)
 
     if (! trc_msk[0]) {
       allmsk = false;
+      bool cpc = (Dist[0] == 1) ? true : false;
       tbl_up[0] = TransProb[GAP_NOCHANGE][CPG_UP] + EmitProb[CPG_UP][0];
       tbl_down[0] = TransProb[GAP_NOCHANGE][CPG_DOWN] + EmitProb[CPG_DOWN][0];
       tbl_nc[0] = TransProb[GAP_NOCHANGE][CPG_NOCHANGE] + EmitProb[CPG_NOCHANGE][0];
-      tbl[0] = tbl_down[0] + TransProb[CPG_DOWN][GAP_NOCHANGE] 
+      if (cpc) tbl[0] = tbl_down[0] + Fast_LogAdd(TransProb[CPG_DOWN][CPG_UP], 
+						  TransProb[CPG_DOWN][CPG_NOCHANGE]) 
+	- Fast_LogAdd(tbl_up[0] + Fast_LogAdd(TransProb[CPG_UP][CPG_DOWN], 
+					      TransProb[CPG_UP][CPG_NOCHANGE]), 
+		      tbl_nc[0] + Fast_LogAdd(TransProb[CPG_NOCHANGE][CPG_UP], 
+					      TransProb[CPG_NOCHANGE][CPG_DOWN]));
+      else tbl[0] = tbl_down[0] + TransProb[CPG_DOWN][GAP_NOCHANGE] 
 	- Fast_LogAdd(tbl_up[0] + TransProb[CPG_UP][GAP_NOCHANGE], 
 		      tbl_nc[0] + TransProb[CPG_NOCHANGE][GAP_NOCHANGE]);
     }
@@ -276,24 +331,59 @@ dregion_ratio(std::ofstream& ofs, const MethylList& met, ValueType thsh)
       if (trc_msk[i]) continue;
       else allmsk = false;
       uint d = Dist[i-1];
-      ValueType val_up = TransProb[CPG_UP][GAP_UP] 
-	+ (d - 2) *  TransProb[GAP_UP][GAP_UP] 
-	+ TransProb[GAP_UP][CPG_UP] + EmitProb[CPG_UP][i] ;
-      ValueType val_down = TransProb[CPG_DOWN][GAP_DOWN] 
-	+ (d - 2) *  TransProb[GAP_DOWN][GAP_DOWN] 
-	+ TransProb[GAP_DOWN][CPG_DOWN] + EmitProb[CPG_DOWN][i];
-      ValueType val_nc = TransProb[CPG_NOCHANGE][GAP_NOCHANGE] 
-	+ (d - 2) * TransProb[GAP_NOCHANGE][GAP_NOCHANGE] 
-	+ TransProb[GAP_NOCHANGE][CPG_NOCHANGE] + EmitProb[CPG_NOCHANGE][i];
-      ValueType val = tbl_down[i-1] + val_down + TransProb[CPG_DOWN][GAP_NOCHANGE] 
-	- Fast_LogAdd(tbl_up[i-1] + val_up + TransProb[CPG_UP][GAP_NOCHANGE], 
-		      tbl_nc[i-1] + val_nc + TransProb[CPG_NOCHANGE][GAP_NOCHANGE]);
-      ValueType v_up = TransProb[GAP_NOCHANGE][CPG_UP] + EmitProb[CPG_UP][i];
-      ValueType v_down = TransProb[GAP_NOCHANGE][CPG_DOWN] + EmitProb[CPG_DOWN][i];
-      ValueType v_nc = TransProb[GAP_NOCHANGE][CPG_NOCHANGE] + EmitProb[CPG_NOCHANGE][i];
-      ValueType v = v_down + TransProb[CPG_DOWN][GAP_NOCHANGE] 
-	- Fast_LogAdd(v_up + TransProb[CPG_UP][GAP_NOCHANGE], 
-		      v_nc + TransProb[CPG_NOCHANGE][GAP_NOCHANGE]);
+      bool cpc = (i != dpsize_ - 1 && Dist[i] == 1) ? true : false;
+      ValueType val, val_up, val_down, val_nc; // DMR extended
+      ValueType v, v_up, v_down, v_nc; // DMR opened
+      if (d == 1) {
+	val_up = TransProb[CPG_UP][CPG_UP] + EmitProb[CPG_UP][i];
+	val_down = TransProb[CPG_DOWN][CPG_DOWN] + EmitProb[CPG_DOWN][i];
+	val_nc = TransProb[CPG_NOCHANGE][CPG_NOCHANGE] + EmitProb[CPG_NOCHANGE][i];
+	v_up = Fast_LogAdd(TransProb[CPG_DOWN][CPG_UP], 
+			   TransProb[CPG_NOCHANGE][CPG_UP]) 
+	  + EmitProb[CPG_UP][i];
+	v_down = Fast_LogAdd(TransProb[CPG_UP][CPG_DOWN], 
+			     TransProb[CPG_NOCHANGE][CPG_DOWN]) 
+	  + EmitProb[CPG_DOWN][i];
+	v_nc = Fast_LogAdd(TransProb[CPG_UP][CPG_NOCHANGE], 
+			   TransProb[CPG_DOWN][CPG_NOCHANGE]) 
+	  + EmitProb[CPG_NOCHANGE][i];
+      }
+      else {
+	val_up = TransProb[CPG_UP][GAP_UP] 
+	  + (d - 2) *  TransProb[GAP_UP][GAP_UP] 
+	  + TransProb[GAP_UP][CPG_UP] + EmitProb[CPG_UP][i];
+	val_down = TransProb[CPG_DOWN][GAP_DOWN] 
+	  + (d - 2) *  TransProb[GAP_DOWN][GAP_DOWN] 
+	  + TransProb[GAP_DOWN][CPG_DOWN] + EmitProb[CPG_DOWN][i];
+	val_nc = TransProb[CPG_NOCHANGE][GAP_NOCHANGE] 
+	  + (d - 2) * TransProb[GAP_NOCHANGE][GAP_NOCHANGE] 
+	  + TransProb[GAP_NOCHANGE][CPG_NOCHANGE] + EmitProb[CPG_NOCHANGE][i];
+	v_up = TransProb[GAP_NOCHANGE][CPG_UP] + EmitProb[CPG_UP][i];
+	v_down = TransProb[GAP_NOCHANGE][CPG_DOWN] + EmitProb[CPG_DOWN][i];
+	v_nc = TransProb[GAP_NOCHANGE][CPG_NOCHANGE] + EmitProb[CPG_NOCHANGE][i];	
+      }
+      if (cpc) {
+	val = tbl_down[i-1] + val_down + Fast_LogAdd(TransProb[CPG_DOWN][CPG_UP], 
+						     TransProb[CPG_DOWN][CPG_NOCHANGE])
+	  - Fast_LogAdd(tbl_up[i-1] + val_up + Fast_LogAdd(TransProb[CPG_UP][CPG_DOWN], 
+							   TransProb[CPG_UP][CPG_NOCHANGE]), 
+			tbl_nc[i-1] + val_nc + Fast_LogAdd(TransProb[CPG_NOCHANGE][CPG_UP], 
+							   TransProb[CPG_NOCHANGE][CPG_DOWN])); 
+	v = v_down + Fast_LogAdd(TransProb[CPG_DOWN][CPG_UP], 
+				 TransProb[CPG_DOWN][CPG_NOCHANGE]) 
+	  - Fast_LogAdd(v_up + Fast_LogAdd(TransProb[CPG_UP][CPG_DOWN], 
+					   TransProb[CPG_UP][CPG_NOCHANGE]), 
+			v_nc + Fast_LogAdd(TransProb[CPG_NOCHANGE][CPG_UP], 
+					   TransProb[CPG_NOCHANGE][CPG_DOWN]));
+      }
+      else {
+	val = tbl_down[i-1] + val_down + TransProb[CPG_DOWN][GAP_NOCHANGE] 
+	  - Fast_LogAdd(tbl_up[i-1] + val_up + TransProb[CPG_UP][GAP_NOCHANGE], 
+			tbl_nc[i-1] + val_nc + TransProb[CPG_NOCHANGE][GAP_NOCHANGE]);	
+	v = v_down + TransProb[CPG_DOWN][GAP_NOCHANGE] 
+	  - Fast_LogAdd(v_up + TransProb[CPG_UP][GAP_NOCHANGE], 
+			v_nc + TransProb[CPG_NOCHANGE][GAP_NOCHANGE]);
+      }      
       if (val > v && (! trc_msk[i-1])) { // extension from masked region is not allowed 
 	tbl[i] = val;
 	tbl_up[i] = tbl_up[i-1] + val_up;
@@ -323,8 +413,9 @@ dregion_ratio(std::ofstream& ofs, const MethylList& met, ValueType thsh)
     for (idx=jdx; trc_tbl[idx]; --idx);
     if (idx != jdx) {
       ofs << met.name_ << "\t" << met.pos_[idx] << "\t" << met.pos_[jdx]+1 
-	  << "\tDOWN\t" << max << endl;
+	  << "\tDOWN\t" << max << "\t" << max / (met.pos_[jdx] - met.pos_[idx] + 1) << endl;
     }
     for (uint i=idx; i<=jdx; ++i) trc_msk[i] = true;
   }
 }
+

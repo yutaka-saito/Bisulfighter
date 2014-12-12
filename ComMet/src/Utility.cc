@@ -1,43 +1,87 @@
-// ComMet
-// by National Institute of Advanced Industrial Science and Technology (AIST)
-// is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
-// http://creativecommons.org/licenses/by-nc-sa/3.0/
-
-
 #include <iostream>
 #include <cassert>
+#include <cstdio>
 #include <cmath>
+#include <boost/math/special_functions/gamma.hpp>
+#include <boost/math/special_functions/digamma.hpp>
+#include <boost/math/special_functions/beta.hpp>
+#include <boost/math/special_functions/binomial.hpp>
 
-#include "Utility.h"
+#include "Utility.hh"
 
 using namespace std;
+using namespace boost;
+namespace bm = boost::math;
+
+std::string
+whoami()
+{
+  const string iam = "ComMet v1.1 - identification of differentially methylated regions (DMRs)";
+  return iam;
+}
 
 void
-progress(const char* message) {
+progress(const char* message) 
+{
   cout << message << endl << flush;
 }
 
 void
-progress(const string& message) {
+progress(const string& message) 
+{
   cout << message << endl << flush;
 }
 
 string 
-whoami() {
-  string iam = "ComMet v1.0 - identification of differentially methylated regions (DMRs)";
-  return iam;
+formatval(const char* format, double val)
+{
+  char buf[64];
+  sprintf(buf, format, val);
+  return string(buf);
 }
 
 uint 
-round(float val) {
-  return (uint) (val + 0.5);
+round(float x) 
+{
+  assert(x >= 0.0);
+  return (uint) (x + 0.5);
+}
+
+double 
+fast_gamma(double x) 
+{
+  assert(x > 0.0);
+  return bm::lgamma(x);
+}
+
+double 
+fast_digamma(double x) 
+{
+  assert(x > 0.0);
+  return bm::digamma(x);
+}
+
+double 
+fast_beta(double x, double y)
+{
+  assert(x > 0.0 && y > 0.0);
+  return log(bm::beta(x, y));
+  //return bm::lgamma(x) + bm::lgamma(x) - bm::lgamma(x+y);
+}
+
+double 
+fast_comb(double x, double y)
+{
+  assert(x >= 0.0 && y >= 0.0);
+  return log(bm::binomial_coefficient<double>((uint) x, (uint) y));
+  //return bm::lgamma(x+1.0) - bm::lgamma(y+1.0) - bm::lgamma(x-y+1.0);
 }
 
 double 
 log_binom(uint m, uint u, double s) {
   uint n = m + u;
-  double ls = Log(s);
-  double lf = Log(1.0 - s);
+  double ls = log(s);
+  double lf = log(1.0 - s);
 
   if (m==0) { 
     return n * lf;
@@ -48,20 +92,7 @@ log_binom(uint m, uint u, double s) {
   else {
     double lprb = m * ls + u * lf;
     for (uint i=0; i!=m; ++i) 
-      lprb += Log((double) (u + i + 1) / (i + 1));
+      lprb += log((double) (u + i + 1) / (i + 1));
     return lprb;
   }
 }
-
-double
-log_asin(double ds) {
-  ds = 0.5 + (ds + 1.0) / 4;
-  return Log(2.0 / (PI * sqrt(ds * (1.0 - ds) ) ) );
-}
-
-double
-log_beta(double ds, double alpha) {
-  ds = (ds + 1.0) / 2;
-  return Log(alpha * pow(ds, alpha - 1.0)) ;
-}
-

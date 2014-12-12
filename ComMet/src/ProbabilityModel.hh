@@ -1,19 +1,15 @@
-// ComMet
-// by National Institute of Advanced Industrial Science and Technology (AIST)
-// is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
-// http://creativecommons.org/licenses/by-nc-sa/3.0/
-
-
-#ifndef __INC_PROBABILITY_MODEL_H__
-#define __INC_PROBABILITY_MODEL_H__
+#ifndef __INC_PROBABILITY_MODEL_HH__
+#define __INC_PROBABILITY_MODEL_HH__
 
 #include <fstream>
 #include <vector>
 
-#include "Utility.h"
-#include "Data.h"
+#include "Utility.hh"
+#include "GlobalStatistics.hh"
+#include "Data.hh"
 
-class ProbabilityModel {
+class ProbabilityModel 
+{
 protected:
   typedef double ValueType; // float causes numerical errors
 
@@ -23,8 +19,8 @@ protected:
   virtual ~ProbabilityModel() {}
 
 public:
-  bool reset(const MethylList& met, ValueType alpha);
-  virtual void reset_param(const MethylList& met, ValueType alpha) = 0;
+  bool reset(const MethylList& met, const GlobalStatistics& gstat, bool noncpg);
+  virtual void reset_param(const MethylList& met, const GlobalStatistics& gstat) = 0;
   void print_param(bool logspc);
   void print_table(const std::vector<std::vector<ValueType> >& tbl, bool logspc);
 
@@ -46,8 +42,12 @@ protected:
   std::vector<ValueType> InitProb;
   std::vector<std::vector<ValueType> > TransProb;
   std::vector<std::vector<ValueType> > EmitProb;
+  // TransProbDist[j-NCPGState][i] = (Dist[i] - 2) * TransProb[j][j]
+  std::vector<std::vector<ValueType> > TransProbDist;
+  std::vector<uint> Dist;
 
 protected:
+  bool noncpg_;
   uint dpsize_;
   std::vector<std::vector<ValueType> > vtb_; // DP table for Viterbi algorithm
   std::vector<std::vector<uint> > trc_vtb_; // traceback table for Viterbi algorithm

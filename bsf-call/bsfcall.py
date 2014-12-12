@@ -23,6 +23,8 @@ import gzip
 import logging
 from time import sleep
 from shutil import copy
+import re
+import pysam
 
 class BsfCallBase(object):
     """
@@ -156,6 +158,83 @@ class BsfCallBase(object):
         return filePath[-3:] == ".gz"
 
 
+    def isMafFile(self, filePath):
+        f = open(filePath, "rb")
+        data = f.read(1)
+        f.close()
+        if re.match("[\x20-\x7E]", data):
+            f = open(filePath, "r")
+            first_line = f.readline()
+            if first_line[0:5] != "track" and first_line[0] != "#" and first_line[0:2] != "a ":
+                f.close()
+                return False
+
+            if first_line[0:2] == "a ":
+                cnt = 2
+            else:
+                cnt = 1
+
+            while True:
+                line = f.readline()
+                if line == "":
+                    break
+                if line[0] == "#" or line.strip() == "":
+                    continue
+
+                if cnt == 1 and line[0:2] != "a ":
+                    f.close()
+                    return False
+
+                if cnt == 2 and line[0:2] != "s ":
+                    f.close()
+                    return False
+
+                if cnt == 3:
+                    f.close()
+                    if line[0:2] == "s ":
+                        return True
+                    else:
+                        return False
+
+                cnt += 1
+
+            f.close()
+            return False
+        else:
+            return False
+
+
+    def isBamFile(self, filePath):
+        bgzf_magic = b"\x1f\x8b\x08\x04"
+
+        f = open(filePath, "rb")
+        data = f.read(4)
+        f.close()
+
+        return data == bgzf_magic
+
+
+    def isSamFile(self, filePath):
+        f = open(filePath, "rb")
+        data = f.read(1)
+        if data == "@":
+            tag = f.read(2)
+            if tag == "HD" or tag == "SQ" or tag == "RG" or tag == "CO":
+                f.close()
+                return True
+
+        f.seek(0)
+        data = f.read(1)
+        f.close()
+        if re.match("[\x20-\x7E]", data):
+            f = open(filePath, "r")
+            line = f.readline()
+            f.close()
+            return len(line.split("\t")) > 10
+        else:
+            return False
+
+
     def scriptDir(self):
         return os.path.dirname(os.path.abspath(sys.argv[0]))
 
@@ -219,8 +298,8 @@ class BsfCallBase(object):
 
     def filterOpts(self, mismapProb, scoreThres, isPairedEnd):
         """
-        get filtering option. this option is specified to last-map-probs.py or
-        last-pair-probs.py.
+        get filtering option. this option is specified to last-map-probs or
+        last-pair-probs.
         """
 
         option = ""
@@ -281,6 +360,22 @@ class BsfCallBase(object):
             logging.info(cmd)
 
 
+    def bamMapq2Mismap(self, mapq):
+        return pow(0.1, (float(mapq) / 10))
+
+
+    def getAllMappingResultFiles(self, resultDirs):
+        mapping_result_files = []
+
+        for result_dir in resultDirs:
+            for root, dirs, files in os.walk(result_dir):
+                for filename in files:
+                    mapping_result_file = os.path.join(root, filename)
+                    mapping_result_files.append(mapping_result_file)
+        
+        return mapping_result_files
+                        
+
 class BsfCall(BsfCallBase):
     """
     class to execute bsf-call process.
@@ -304,6 +399,9 @@ class BsfCall(BsfCallBase):
         self.readInFh2 = None
         self.numReads = {1: 0, 2: 0}
 
+        self.mappingResultDirs = []
+        self.mappingResultFiles = []
+
         self.setDataDir()
         self.setLogger()
 
@@ -325,13 +423,16 @@ class BsfCall(BsfCallBase):
 
         try:
             if self.opts["mapping_dir"]:
-                result_dirs = self.opts["mapping_dir"].split(",")
+                # Only mc detection
+                self.mappingResultDirs = self.opts["mapping_dir"].split(",")
+                self.mappingResultFiles = self.getAllMappingResultFiles(self.mappingResultDirs)
+                self.opts["mapping_result_files"] = self.mappingResultFiles
             else:
                 self.makeIndexFile()
                 self.processReads()
-                result_dirs = self.processMapping()
+                self.mappingResultDirs = self.processMapping()
 
-            self.processMcDetection(result_dirs, self.opts["local_dir"])
+            self.processMcDetection(self.mappingResultDirs, self.opts["local_dir"])
 
             logging.info("bsf-call done.")
         except:
@@ -413,6 +514,8 @@ class BsfCall(BsfCallBase):
             logging.info("Mapping result directory is specified. Only mC detection is executed.")
             logging.info("  Mapping result directory: %s" % self.opts["mapping_dir"])
             logging.info("  Reference genome: %s" % self.refGenome)
+            logging.info("  Read BAM file: %s" % ("Yes" if self.opts["read_bam"] else "No"))
+            logging.info("  Read SAM file: %s" % ("Yes" if self.opts["read_sam"] else "No"))
         else:
             logging.info("Reference genome: %s" % self.refGenome)
             logging.info("Read files: %s" % self.readFilePaths)
@@ -683,7 +786,6 @@ class BsfCall(BsfCallBase):
         self.afterProcessSplitRead(outFilePath, readAttr)
 
         return None
-
 
                 
     def afterProcessSplitRead(self, readFile, readAttr = None):
@@ -970,6 +1072,14 @@ class BsfCallCluster(BsfCall):
         argv.append(str(self.opts["lower_bound"]))
         argv.append(str(self.opts["coverage"]))
         argv.append(str(self.opts["aln_mismap_prob_thres"]))
+
+        if self.opts["read_bam"]:
+            argv.append("BAM")
+        elif self.opts["read_sam"]:
+            argv.append("SAM")
+        else:
+            argv.append("MAF")
+            
         if self.opts["local_dir"]:
             argv.append(self.opts["local_dir"])
 
@@ -1145,7 +1255,7 @@ class LastExecutor(BsfCallBase):
         get command to merge lastal output.
         """
 
-        cmd = "last-merge-batches.py %s %s %s > %s" % (opts, forwardFile, reverseFile, outputFile)
+        cmd = "last-merge-batches %s %s %s > %s" % (opts, forwardFile, reverseFile, outputFile)
         if rmInFiles:
             cmd += "; rm %s %s" % (forwardFile, reverseFile)
 
@@ -1370,7 +1480,7 @@ class LastExecutorSingle(LastExecutor):
         get filter command.
         """
 
-        cmd = "last-map-probs.py %s %s > %s" % (opts, inputFile, outputFile)
+        cmd = "last-map-probs %s %s > %s" % (opts, inputFile, outputFile)
         if rmInFile:
             cmd += "; rm %s" % inputFile
 
@@ -1418,7 +1528,7 @@ class LastExecutorPairedEnd(LastExecutor):
         get filter command.
         """
 
-        cmd = "last-pair-probs.py %s %s > %s" % (opts, inputFile, outputFile)
+        cmd = "last-pair-probs %s %s > %s" % (opts, inputFile, outputFile)
         if rmInFile:
             cmd += "; rm %s" % inputFile
 
@@ -1436,15 +1546,28 @@ class McDetector(BsfCallBase):
         """
 
         self.refGenome = refGenome
-        self.resultDirs = resultDirs
+        self.mappingResultDirs = resultDirs
         self.mcContextDir = mcContextDir
         self.lowerBound = options["lower_bound"]
         self.coverageThreshold = options["coverage"]
+        self.onlyMcDetection = options["only_mcdetection"]
 
-        if options["only_mcdetection"]:
+        self.opts = options
+
+        self.mappingResultFiles = []
+
+        if self.onlyMcDetection:
             self.mismapThreshold = options["aln_mismap_prob_thres"]
+            self.readBam = options["read_bam"]
+            self.readSam = options["read_sam"]
+            if "mapping_result_files" in options:
+                self.mappingResultFiles = options["mapping_result_files"]
+            else:
+                self.mappingResultFiles = self.getAllMappingResultFiles(resultDirs)
         else:
             self.mismapThreshold = None
+            self.readBam = False
+            self.readSam = False
 
         if options["local_dir"]:
             self.localDir = options["local_dir"]
@@ -1460,7 +1583,7 @@ class McDetector(BsfCallBase):
 
         self.mcDetectData = {}
 
-        logging.debug("McDetector.__init__: self.resultDirs: %s" % self.resultDirs)
+        logging.debug("McDetector.__init__: self.mappingResultDirs: %s" % self.mappingResultDirs)
 
 
     def execute(self, outputFile, numWorkers = 1):
@@ -1477,6 +1600,7 @@ class McDetector(BsfCallBase):
                 self.targetChr = self.chrnoFromFastaDescription(line)
             else:
                 self.refGenomeBuf.append(line.upper())
+        # last chromosome
         self.processOneChr()
         self.chrs.append(self.targetChr)
 
@@ -1506,13 +1630,21 @@ class McDetector(BsfCallBase):
         self.targetSeqC = self.complementSeq(self.targetSeqD).upper()
 
         logging.info("mC detection process start: %s (%d)" % (self.targetChr, self.targetSeqLen))
-        logging.debug("processOneChr: self.resultDirs: %s" % self.resultDirs)
 
-        for result_dir in self.resultDirs:
-            logging.debug("processOneChr: result_dir: %s" % result_dir)
-            for root, dirs, files in os.walk(result_dir):
-                for filename in files:
-                    self.processMappingResultFile(os.path.join(root, filename))
+        for mapping_result_file in self.mappingResultFiles:
+            logging.debug("Mapping result file: %s" % mapping_result_file)
+            if self.onlyMcDetection:
+                if not (self.readBam or self.readSam):
+                    if self.isGzippedFile(mapping_result_file) or self.isMafFile(mapping_result_file):
+                        self.processMafFile(mapping_result_file)
+                else:
+                    # BAM or SAM
+                    if self.readBam and self.isBamFile(mapping_result_file):
+                        self.processSamFile(mapping_result_file)
+                    elif self.readSam and self.isSamFile(mapping_result_file):
+                        self.processSamFile(mapping_result_file)
+            else:
+                self.processMafFile(mapping_result_file)
 
         logging.info("mC detection process done: %s (%d)" % (self.targetChr, self.targetSeqLen))
 
@@ -1599,7 +1731,7 @@ class McDetector(BsfCallBase):
         self.gzipFile(fpath, False)
 
 
-    def processMappingResultFile(self, resultFile):
+    def processMafFile(self, resultFile):
         """
         read mapping result file, and output mC context data file.
         """
@@ -1680,6 +1812,54 @@ class McDetector(BsfCallBase):
             logging.fatal("  %s" % str(e))
             if f:
                 f.close()
+
+
+    def processSamFile(self, samFile):
+        """
+        read mapping BAM/SAM file, and output mC context data file.
+        """
+
+        logging.info("Process BAM/SAM file start: %s" % samFile)
+
+        samfile = None
+        try:
+            if self.readBam:
+                samfile = pysam.Samfile(samFile, "rb")
+            else:
+                samfile = pysam.Samfile(samFile, "r")
+
+            counter = 1
+            for aln in samfile.fetch(until_eof = True):
+                samaln = SamAlnParser(samfile, aln)
+                samaln.setRefGenome(self.targetChr, self.targetSeqD, self.targetSeqLen)
+                samaln.parse()
+
+                chr = samaln.referenceName()
+
+                if (chr is None) or (chr != self.targetChr):
+                    continue
+
+                if aln.mapq:
+                    mismap = self.bamMapq2Mismap(aln.mapq)
+                    if mismap - self.mismapThreshold > 0:
+                        continue
+
+                read_seq = samaln.alnReadSeq.replace("t", "C")
+                self.extractMcContextsByOneRead(chr, samaln.strand, samaln.alnRefSeq.upper(), samaln.alnRefStart, self.targetSeqLen, read_seq)
+
+                counter += 1
+                if counter > 500000:
+                    self.outputMcContextData()
+                    counter = 1
+
+            samfile.close()
+            self.outputMcContextData()
+        except Exception, e:
+            logging.fatal(samFile)
+            logging.fatal("  %s" % str(type(e)))
+            logging.fatal("  %s" % str(e))
+            if samfile:
+                samfile.close()
 
 
     def extractMcContextsByOneRead(self, chr, strand, refSeq, refStart, refSeqLen, readSeq):
@@ -1821,4 +2001,100 @@ class McDetector(BsfCallBase):
         """
 
         return "%s/%s.tsv" % (self.mcContextDir, chrNo)
+
+
+class SamAlnParser(BsfCallBase):
+
+    def __init__(self, samfile, aln):
+        self.samfile = samfile
+        self.aln = aln
+
+        self.refName = None
+        self.refSeq = None
+        self.refSeqLen = None
+
+        self.strand = None
+
+        self.alnRefStart = None
+        self.alnRefSeq = None
+        self.alnRefSeqLen = None
+
+        self.alnReadSeq = None
+
+
+    def setRefGenome(self, name, sequence, length = None):
+        if length is None:
+            length = len(sequence)
+
+        self.refName = name
+        self.refSeq = sequence
+        self.refSeqLen = length
+
+
+    def referenceName(self):
+        if self.aln.tid >= 0:
+            return self.samfile.getrname(self.aln.tid)
+        else:
+            return None
+
+
+    def getStrand(self):
+        if self.aln.is_reverse:
+            return "-"
+        else:
+            return "+"
+
+
+    def parseCigar(self, cigar):
+        return [{"op": v[-1:], "num": int(v[:-1])} for v in re.findall('\d+[A-Z=]', cigar)]
+
+
+    def alignmentSequences(self, refSeqPos, readSeq, cigars):
+        refs = []
+        rest_refseq = 0
+
+        reads = []
+        read_pos = 0
+
+        for cigar in cigars:
+            if cigar["op"] == "M":
+                refs.append(self.refSeq[refSeqPos:refSeqPos+cigar["num"]])
+                refSeqPos += cigar["num"]
+                reads.append(readSeq[read_pos:read_pos+cigar["num"]])
+                read_pos += cigar["num"]
+            elif cigar["op"] == "I":
+                refs.append("-" * cigar["num"])
+                reads.append(readSeq[read_pos:read_pos+cigar["num"]])
+                read_pos += cigar["num"]
+            elif cigar["op"] == "P":
+                refs.append("-" * cigar["num"])
+                reads.append("-" * cigar["num"])
+            elif cigar["op"] == "D" or cigar["op"] == "N":
+                rest_refseq += cigar["num"]
+                reads.append("-" * cigar["num"])
+            elif cigar["op"] == "S":
+                read_pos += cigar["num"]
+
+        if rest_refseq > 0:
+            refs.append(self.refSeq[refSeqPos:refSeqPos+rest_refseq])
+
+        return {"reference": "".join(refs), "read": "".join(reads)}
+
+
+    def parse(self):
+        self.strand = self.getStrand()
+
+        self.alnRefStart = self.aln.pos
+        read_seq = self.aln.seq
+        cigars = self.parseCigar(self.aln.cigarstring)
+        alignment = self.alignmentSequences(self.alnRefStart, read_seq, cigars)
+
+        if self.strand == "+":
+            self.alnRefSeq = alignment["reference"]
+            self.alnReadSeq = alignment["read"]
+        elif self.strand == "-":
+            nogap_refseq = self.clearGap(alignment["reference"])
+            self.alnRefStart =  self.complementStartPosition(self.refSeqLen, self.alnRefStart, len(nogap_refseq))
+            self.alnRefSeq = self.complementSeq(alignment["reference"])
+            self.alnReadSeq = self.complementSeq(alignment["read"])
 

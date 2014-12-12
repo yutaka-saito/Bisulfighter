@@ -1,18 +1,13 @@
-// ComMet
-// by National Institute of Advanced Industrial Science and Technology (AIST)
-// is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
-// http://creativecommons.org/licenses/by-nc-sa/3.0/
-
-
-#ifndef __INC_NAIVE_MODEL_H__
-#define __INC_NAIVE_MODEL_H__
+#ifndef __INC_NAIVE_MODEL_HH__
+#define __INC_NAIVE_MODEL_HH__
 
 #include <fstream>
 #include <vector>
 
-#include "Utility.h"
-#include "ProbabilityModel.h"
-#include "Data.h"
+#include "Utility.hh"
+#include "ProbabilityModel.hh"
+#include "GlobalStatistics.hh"
+#include "Data.hh"
 
 class NaiveModel : public ProbabilityModel 
 {
@@ -34,7 +29,7 @@ public:
   ~NaiveModel() {}
 
 public:
-  void reset_param(const MethylList& met, ValueType alpha);
+  void reset_param(const MethylList& met, const GlobalStatistics& gstat);
   void dbase(std::ofstream& ofs, const MethylList& met);
   void dregion(std::ofstream& ofs, const MethylList& met, const std::vector<uint>& path);
   void dregion_viterbi(std::ofstream& ofs, const MethylList& met);
