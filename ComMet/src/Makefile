@@ -43,6 +43,7 @@ all: $(PROGRAM1) Makefile
 
 clean:
 	\rm -f *.o *~ $(PROGRAM1)
+	chmod 644 *.cc *.h *.hpp
 
 $(PROGRAM1): $(OBJ1)
 	$(CXX) $(CPPFLAGS) -o $(PROGRAM1) $(OBJ1) $(LDFLAGS) $(LDLIBS)

@@ -22,6 +22,15 @@ reset(const MethylList& met, ValueType alpha)
     return false;
   }
 
+  // dist
+  for (uint i=0; i!=met.pos_.size()-1; ++i) {
+    uint dist = met.pos_[i+1] - met.pos_[i];
+    if (dist < 2) {
+      cout << "error: distance between neighbor CpGs must not be less than 2 " << met.name_ << endl;
+      return false;
+    }
+  }
+
   // For the reuse of a class instance, clear() is necessary before resize()  
   // because resize() a vector to the same size as the previous use DOES NOT 
   // overwrite its values. 

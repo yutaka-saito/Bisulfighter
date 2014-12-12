@@ -8,33 +8,57 @@ SYNOPSIS
 
 OPTIONS
 	-c <integer>, --coverage=<integer>
-		Specify the threshold for valid read coverage for mC detection (default: 5).
+		Specifies the threshold for valid read coverage for mC detection (default: 5).
 
 	-l <float>, --lover-bound=<float>
-		Specify the threshold for valid mC rate (default: 0.01).
+		Specifies the threshold for valid mC rate (default: 0.01).
 
 	-s <integer>
-		Specify the threshold for valid alignment score (default: 150)
+		Specifies the threshold for valid alignment score (default: 150)
 		
 	-m <float>
-		Specify the threshold for filtering mis-mapping probability (default: 0.01)
+		Specifies the threshold for filtering mis-mapping probability (default: 0.01)
 
 	-p <integer>, --multi-thread=<integer>
-		Specify the number of threads (default: 1)
+		Specifies the number of threads (default: 1)
 
 	-o <filename>
-		Specify the filename for the output (default: stdout)
+		Specifies the filename for the output (default: STDOUT)
 
 	--last=<opt,opt,...>
-		Specify options passed to lastal command.
+		Specifies options passed to lastal command.
 		"-s" and "-Q" options are automatically specified by bsf-call.
 
 	-W <path>
-		Specify the working directory (default: ./bsf-call_work ).
+		Specifies the working directory (default: ./bsf-call_work ).
 
-	--work-wuto
-		Let bsf-call determine the working directory automatically.
+	--work-auto
+		Lets bsf-call determine the working directory automatically which differs from -W default value and the generated wroking directory has a format YYYYmmdd-HHMMSS-microsecond-MD5HASH.
+		MD5HASH part is a MD5 hash value (first 16 columns) computed from values of options and arguments.
+		e.g. 20130130-164854-371195-14a503deb0ef62a5
 		-W option cancels this option.
+
+	-n
+		Lets bsf-call run on parallel job scheduler.
+		Currently Sun Grid Engine is supported.
+		This option cancells -p or --multi-thread.
+
+	-q <queue>, -q <queue>@<hostname>,<queue>@<hostname>,...
+		Specifies queue names used for bsf-call.
+
+	-M <directory>, -M <directory>,<directory>,...
+		Only mC-detection is performed by using mapping results stored in <directory>.
+		Subdirectories are searched for finding mapping files in MAF format.
+
+
+REQUIRED FILES
+	The following files should stay in the same directory:
+	bsf-call
+	bsfcall.py
+	mapping-p.sh
+	mapping-s.sh
+	mc-detector.py
+
 
 REFERENCE_GENOME
 	Specify the filename for the reference genome, which is a multi-fasta file.
@@ -53,8 +77,18 @@ SEQUENCE_FILES
 	3) mixture of single and paired reads
 		single-sample1.fastq paired-sample1-1.fastq,paired-sample1-2.fastq
 
-EXAMPLE
+EXAMPLES
+
+	Case 1)
 	bsf-call -c 10 -m 0.1 -s 250 -o experiment.txt --last=-d108,-e120,-i1 -W mywork hg19/hg19.fa paired-sample1-1.fastq,paired-sample1-2.fastq single-sample1.fasta
+
+	Case 2)
+	bsf-call -n -c 10 -m 0.1 -s 250 -o result.txt --last=-d108,-e120,-i1 -W mywork hg19/hg19.fa paired-sample1-1.fastq,paired-sample1-2.fastq single-sample1.fasta
+
+	Case 3)
+	bsf-call -n -M mapping_resdir1,mapping_resdir2 -c 10 -m 0.1 -o result.txt -W mywork hg19/hg19.fa
+
+
 
 OUTPUT FORMAT
 	bsf-call outputs six column tab-delimited text file.
@@ -72,6 +106,22 @@ OUTPUT FORMAT
 	chr2	71345	+	CHG	0.04	21
 	chr10	71345	-	CHH	0.07	5
 	chrX	52123	+	CG	0.21	21
+
+WORKING DIRECTORY
+	$W represents a specified or default working directory.
+	$W/1	Results for single/primary reads are stored under this directory.
+	mapping_<read_filename>.err	STDERR from a job scheduler go to this file.
+	mapping_<read_filename>.out	STDOUT from a job scheduler go to this file.
+	$W/1/reads	Single/primary reads divided into 100mil read per file are stored in this directory.
+	$W/1/results	Mapping/filtering results
+	$W/2	Results for secondary reads
+	$W/mc_contexts	mC-detection results
+	$W/mc_contexts/<chromosome>	Intermediate files
+	$W/mc_contexts/<chromosome>.tsv	mC-detection results per chromosome
+	$W/mc_contexts/mc-detector-<chromosome>.err	Error messages from mc-detector.py
+	$W/mc_contexts/mc-detector-<chromosome>.log	Log messages from mc-detector.py
+	$W/mc_contexts/mc-detector-<chromosome>.out	STDOUT from mc-detector.py
+	$W/bsf-call.log	Log messages from bsf-call script.
 
 AUTHOR
 	Junko Tsuji

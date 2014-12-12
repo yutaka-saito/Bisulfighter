@@ -30,11 +30,8 @@ struct Options
   uint dsep;
   float thsh;
   float alpha;
-  static const float gcpg = 1.0;
-  static const float ggap = 1.0;
   bool dual;
-  static const bool dovtb = false;
-  bool noslim;
+  static const bool noslim = false;
   bool verbose;
 
   Options() : imc_file(), omc_file(), dmr_file() {}
@@ -59,14 +56,6 @@ public:
       std::cout << "alpha must be larger than 2" << std::endl;
       return false;
     }
-    else if (! (opts_.gcpg > 0.0)) {
-      std::cout << "gcpg must be larger than 0" << std::endl;
-      return false;
-    }
-    else if (! (opts_.ggap > 0.0)) {
-      std::cout << "ggap must be larger than 0" << std::endl;
-      return false;
-    }
 
     return identify();
   }
@@ -76,10 +65,8 @@ private:
   {
     bool res = false;
 
-    progress("ComMet v0.1 - identification of differentially methylated regions (DMRs)");
-    std::vector<Data> data;
-
     progress("load methylated bases");
+    std::vector<Data> data;
     res = load_data(data);
     if (!res) return false;
 

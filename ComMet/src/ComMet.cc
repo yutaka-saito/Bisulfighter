@@ -9,6 +9,7 @@
 #include <boost/program_options.hpp>
 #include <boost/bind.hpp>
 
+#include "Utility.h"
 #include "FrameworkComMet.h"
 #include "NaiveModel.h"
 #include "CGIModel.h"
@@ -23,6 +24,8 @@ namespace po = boost::program_options;
 int 
 main(int argc, char** argv)
 {
+  progress(whoami());
+
   Options opts;
 
   // parse command line options
@@ -44,10 +47,9 @@ main(int argc, char** argv)
   po::notify(vm);
   
   if (vm.count("help") || extra_args.size()<3) {
-    cout << "ComMet v0.1 - identification of differentially methylated regions (DMRs)" << endl
-	 << endl
+    cout << endl
 	 << "Usage:" << endl
-	 << "  " << argv[0] << " [options] input output1 output2" << endl
+	 << argv[0] << " [options] input output1 output2" << endl
 	 << endl
 	 << desc << endl;
     return 1;

@@ -38,6 +38,7 @@ II. PACKAGE COMPONENTS
 
 3) bsf-diff
     An optional component for DMR identification using statistical test and signal smoothing.
+    This program is not officially released. You can use this one but we are not going to provide details about this.
 
 4) script
     Scripts to generate simulated reads for differentially methylated

@@ -15,11 +15,17 @@
 #define PI 3.141592653589793238462643383279502884197169399375105820974944
 
 #ifndef uint
-#define uint unsigned int
+#define uint unsigned int 
 #endif
 
 void
 progress(const char* message);
+
+void
+progress(const std::string& message);
+
+std::string
+whoami();
 
 uint 
 round(float val);

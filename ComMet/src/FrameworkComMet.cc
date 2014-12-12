@@ -23,7 +23,7 @@ add_options(po::options_description& opts)
      po::value<uint>(&nitr)->default_value(100),
      "set the number of training iterations")
     ("separate",
-     po::value<uint>(&dsep)->default_value(100),
+     po::value<uint>(&dsep)->default_value(5),
      "divide procedures when CpGs are separated by this distance (Kb)")
     ("threshold",
      po::value<float>(&thsh)->default_value(0.0),
@@ -31,21 +31,12 @@ add_options(po::options_description& opts)
     ("alpha",
      po::value<float>(&alpha)->default_value(8.0),
      "set pseudocounts for the emission function")
-    //("gcpg",
-    // po::value<float>(&gcpg)->default_value(1.0),
-    // "set gamma for the CpG gain function")
-    //("ggap",
-    // po::value<float>(&ggap)->default_value(1.0),
-    // "set gamma for the GAP gain function")
     ("dual",
      po::value<bool>(&dual)->zero_tokens()->default_value(false),
      "use the dual model instead of the naive model")
-    //("viterbi",
-    // po::value<bool>(&dovtb)->zero_tokens()->default_value(false),
-    // "use Viterbi decoding instead of posterior decoding")
-    ("noslim",
-     po::value<bool>(&noslim)->zero_tokens()->default_value(false),
-     "use straightforward implementation instead of slim one")
+    //("noslim",
+    // po::value<bool>(&noslim)->zero_tokens()->default_value(false),
+    // "use straightforward implementation instead of slim one")
     ("verbose",
      po::value<bool>(&verbose)->zero_tokens()->default_value(false),
      "make verbose reports to stdout")

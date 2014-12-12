@@ -10,1037 +10,133 @@ http://creativecommons.org/licenses/by-nc-sa/3.0/
 
 __version__= "0.9"
 
-import sys
-import os
-import glob
-import threading
-import subprocess
-import Queue
 from optparse import OptionParser
-from datetime import datetime
-import md5
-from string import maketrans
-import gzip
-import logging
+import os
+import sys
+import bsfcall
 
-class BsfCallBase(object):
-    def splitFilePath(self, filePath):
-        if self.isGzippedFile(filePath):
-            dir_name, file_name = os.path.split(filePath[0:-3])
-        else:
-            dir_name, file_name = os.path.split(filePath)
-        base_name, ext = os.path.splitext(file_name)
-        if len(ext) > 1:
-            ext = ext[1:]
+prog = 'bsf-call'
+usage = """%prog [options] refgenome read1 read2 ...
+ample: %prog -c 10 -m 0.1 -s 250 -o experiment.txt hg19/hg19.fa paired-sample1-1.sra,paired-sample1-2.sra single-sample1"""
+description = "A mapping of the read bisulfite treated by LAST, to detect methylated cytosine (mC) of the results, and outputs the detection result to the file."
 
-        return (dir_name, file_name, base_name, ext)
+op = OptionParser(prog=prog, usage=usage, description=description, version="%s-%s" % (prog, __version__))
 
+op.add_option("-c", "--coverage", type="int", default=5, metavar="C",
+              help="threshold of read coverate (default: %default)")
 
-    def readNameByReadFile(self, readFilePath):
-        dir_name, file_name, read_name, ext = self.splitFilePath(readFilePath)
+op.add_option("-d", "--pe-direction", type="string", default="ff",
+              help="direction of paired-end probes: ff, fr, rf, rr (default: %default)")
 
-        return read_name
+op.add_option("-l", "--lower-bound", type="float", default=0.01, metavar="L",
+              help="threshold of mC ratio (default: %default)")
 
+op.add_option("-p", "--multi-thread", type="int", default=1, metavar="P",
+              help="number of threads (default: %default)")
 
-    def secondReadFilePathByFirstReadFilePath(self, readFile, secondReadType):
-        fpath = ""
+op.add_option("-s", "", type="int", default=150, metavar="S",
+              help="threshold of the alignment score at filtering (default: %default)")
 
-        if self.isGzippedFile(readFile):
-            dir_name, file_name = os.path.split(readFile[0:-3])
-            basename, ext = os.path.splitext(file_name)
-            fpath = "%s/%s2.%s.gz" % (dir_name, basename[0:-1], secondReadType)
-        else:
-            dir_name, file_name = os.path.split(readFile)
-            basename, ext = os.path.splitext(file_name)
-            fpath = "%s/%s2.%s" % (dir_name, basename[0:-1], secondReadType)
-            
-        return fpath
+op.add_option("-m", "", type="float", default=0.01, metavar="M",
+              help="threshold of the mismap probability at filtering (default: %default)")
 
+op.add_option("", "--last", type="string", default="", metavar="OPT1,OPT2,...",
+              help="options for LAST (lastal command)")
 
-    def pairedEndReadDirections(self):
-        return (1, 2)
+op.add_option("-o", "", type="string", default=None, metavar="FILE",
+              help="output file (default: stdout)")
 
+op.add_option("-W", "", type="string", default=None, metavar="WORKDIR",
+              help="work directory (default: bsf-call_work)")
 
-    def clearGap(self, seq):
-        return seq.replace("-", "")
+op.add_option("", "--work-auto", action="store_true", dest="auto_create_work_dir", default=False,
+              help="create work directory automatically")
 
+op.add_option("-n", "", action="store_true", dest="use_cluster", default=False,
+              help="run bsf-call on pc cluster")
 
-    def chrnoFromFastaDescription(self, description):
-        return description.strip()[1:].strip()
+op.add_option("-q", "", type="string", default="", metavar="QUEUE_LIST",
+              help="queue list")
 
+op.add_option("-M", "", type="string", metavar="MAPPING_DIR",
+              help="mapping result directory")
 
-    def complementStartPosition(self, genomeLen, subseqStart, subseqLen):
-        return genomeLen - subseqStart - subseqLen
+op.add_option("-T", "", type="string", metavar="LOCAL_DIR",
+              help="local directory")
 
+op.add_option("-r", "", type="string", default="100M", metavar="SPLIT_READ_SIZE",
+              help="split read size")
 
-    def complementSeq(self, seq):
-        return seq.translate(maketrans("ATGCatgc", "TACGtacg"))[::-1]
+options, args = op.parse_args()
 
+errors = []
 
-    def getMcContextType(self, bases, startPos, lastPos):
-        try:
-            if bases[startPos + 1] == "G":
-                return "CG"
-            else:
-                if bases[startPos + 2] == "G":
-                    return "CHG"
-                else:
-                    return "CHH"
-        except IndexError:
-            return None
+work_dir = None
+if options.W:
+    work_dir = options.W
+else:
+    if not options.auto_create_work_dir:
+        work_dir = "bsf-call_work"
 
+if options.M:
+    if len(args) < 1:
+        op.error("\n  Reference genome is not specified.")
 
-    def extractChrNo(self, chrName):
-        chr_no = chrName[3:]
-        if chr_no == "X":
-            return 23
-        elif chr_no == "Y":
-            return 24
-        else:
-            return int(chr_no)
+    for result_dir in options.M.split(","):
+        if not os.path.exists(result_dir):
+            errors.append("Mapping result directory: '%s' does not exists." % options.M)
 
-
-    def chrSort(self, a, b):
-        # chrno_a = self.extractChrNo(a)
-        # chrno_b = self.extractChrNo(b)
-        # 
-        # return chrno_a - chrno_b
-        return cmp(a, b)
-
-    def strands(self):
-        return ("+", "-")
-
-
-    def mcContextTypes(self):
-        return ("CG", "CHG", "CHH")
-
-
-    def gzipFile(self, filePath, wait = True):
-        dirpath, fname = os.path.split(filePath)
-        cmd = "gzip %s" % fname
-        p = subprocess.Popen(cmd, shell = True, cwd = dirpath)
-        if wait:
-            p.wait()
-
-
-    def isGzippedFile(self, filePath):
-        return filePath[-3:] == ".gz"
-
-
-class BsfCall(BsfCallBase):
-    def __init__(self, refGenome, readFilePaths, cmdOpts):
-        self.refGenome = refGenome
-        self.readFilePaths = readFilePaths
-        self.reads = []
-        self.opts = cmdOpts
-
-        self.numReadsPerFile = 100 * 1000 * 1000
-        #self.numReadsPerFile = 10 * 1000 * 1000
-        #self.numReadsPerFile = 1 * 1000 * 1000
-
-        self.dataDir = None
-        self.genomeDir = None
-        self.mcContextDir = None
-        self.pairedEnd = None
-        self.pairedEndDirection = None
-
-        self.setDataDir()
-        self.setLogger()
-
-        logging.info("Reference genome: %s", self.refGenome)
-        logging.info("Read files: %s", self.readFilePaths)
-        logging.info("Options:")
-        logging.info("  threshold of read coverate: %d" % self.opts["coverage"])
-        logging.info("  number of threads: %d" % self.opts["num_threads"])
-        logging.info("  threshold of mC ratio: %f" % self.opts["lower_bound"])
-        logging.info("  threshold of the alignment score at filtering: %d" % self.opts["alignment_score_threshold"])
-        logging.info("  threshold of the mismap probability at filtering: %f" % self.opts["alignment_mismap_prob_threshold"])
-        logging.info("  paired-end direction: %s" % self.opts["pe_direction"])
-        if self.opts["last_opts"]:
-            logging.info("  options for LAST: %s" % self.opts["last_opts"])
-        if self.opts["output"]:
-            logging.info("  output file: %s" % self.opts["output"])
-        else:
-            logging.info("  output file: (stdout)")
-        logging.info("  work directory: %s" % self.dataDir)
-
-
-    def execute(self):
-        try:
-            logging.info("bsf-call start.")
-
-            self.makeIndexFile()
-            self.prepare()
-
-            result_dirs = []
-            for read_attr in self.reads:
-                self.executeOneRead(read_attr)
-                result_dirs.append(read_attr["results_dir"])
-
-                mc_detector = McDetector(self.refGenome, result_dirs, self.mcContextDir, self.opts["lower_bound"], self.opts["coverage"])
-                mc_detector.execute(self.opts["output"], self.opts["num_threads"])
-            logging.info("bsf-call end.")
-        except:
-            logging.exception("Exception has occurred.")
-            
-
-    def setDataDir(self):
-        if self.opts["work_dir"]:
-            self.dataDir = self.opts["work_dir"]
-        else:
-            self.dataDir = self.autoWorkDir()
-
-        self.mcContextDir = "%s/mc_contexts" % self.dataDir
-
-        os.mkdir(self.dataDir)
-        os.mkdir(self.mcContextDir)
-
-
-    def setLogger(self):
-        log_level = logging.INFO
-
-        log_file = "%s/bsf-call.log" % self.dataDir
-        file_logger = logging.FileHandler(filename=log_file)
-
-        file_logger.setLevel(log_level)
-        file_logger.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
-
-        logging.getLogger().addHandler(file_logger)
-        logging.getLogger().setLevel(log_level)
-
-
-    def prepare(self):
-        for file_no, read_path in enumerate(self.readFilePaths):
-            read = self.prepareForOneRead(read_path, file_no + 1)
-            self.reads.append(read)
-
-
-    def prepareForOneRead(self, readPath, readNo):
-        data_dir = "%s/%d"% (self.dataDir, readNo)
-        read = {"base_dir": data_dir, "path": readPath, "reads_dir": data_dir + "/reads", "results_dir": data_dir + "/results"}
-
-        os.mkdir(data_dir)
-        os.mkdir(read["reads_dir"])
-        os.mkdir(read["results_dir"])
-
-        direction = 1
-        for read_path in readPath.split(","):
-            dir_name, file_name, base_name, ext = self.splitFilePath(read_path)
-            file_type = self.checkReadFileType(read_path)
-            read[direction] = {"name": base_name, "fname": file_name, "type": file_type, "path": read_path}
-            direction += 1
-
-        if self.isPairedEnd(read):
-            for direction in self.pairedEndReadDirections():
-                if read[direction]["type"] == "sra":
-                    self.sra2Fastq(read[direction]["path"], data_dir, False)
-                    fastq = self.fastqDumpedFilePath(data_dir, read[direction]["name"])
-                    if os.path.exists(fastq):
-                        read[direction]["name"] = self.readNameByReadFile(fastq)
-                        read[direction]["path"] = fastq
-                        read[direction]["type"] = "fastq"
-                        read[direction]["fname"] = os.path.basename(read[direction]["path"])
-        else:
-            if read[1]["type"] == "sra":
-                self.sra2Fastq(read[1]["path"], data_dir, True)
-                read_name = read[1]["name"]
-                for direction in self.pairedEndReadDirections():
-                    fastq = self.fastqDumpedFilePath(data_dir, read_name, direction)
-                    if os.path.exists(fastq):
-                        if not direction in read:
-                            read[direction] = {}
-                        read[direction]["name"] = self.readNameByReadFile(fastq)
-                        read[direction]["path"] = fastq
-                        read[direction]["type"] = "fastq"
-                        read[direction]["fname"] = os.path.basename(read[direction]["path"])
-
-        return read
-
-
-    def executeOneRead(self, readAttr):
-        logging.info("Target read file: %s" % readAttr["path"])
-
-        self.pairedEnd = self.isPairedEnd(readAttr)
-
-        logging.info("Paired-end: %s" % self.pairedEnd)
-        logging.info(": %s" % readAttr[1]["path"])
-        if self.pairedEnd:
-            logging.info("Reverse: %s" % readAttr[2]["path"])
-
-        for direction in self.pairedEndReadDirections():
-            if direction in readAttr:
-                self.splitRead(readAttr[direction]["path"], readAttr["reads_dir"], direction, readAttr[direction]["type"])
-        for dumped_fastq_file in glob.glob("%s/*.fastq" % readAttr["base_dir"]):
-            self.gzipFile(dumped_fastq_file, False)
-
-        self.runLast(readAttr)
-
-
-    def sra2Fastq(self, sraFile, outputDir, splitFiles = True):
-        cmd = "fastq-dump -O %s " % outputDir
-        if splitFiles:
-            cmd += "--split-files "
-        cmd += sraFile
-        logging.info(cmd)
-        p = subprocess.Popen(cmd, shell = True, stdout = subprocess.PIPE, stderr = subprocess.STDOUT)
-        out = p.stdout
-        p.wait()
-        out_data = out.read()
-        if len(out_data) > 0:
-            logging.info(out_data)
-
-
-    def splitRead(self, readFile, outputDir, readNo, fileType):
-        if fileType == "fasta":
-            self.splitFasta(readFile, outputDir, readNo)
-        elif fileType == "fastq":
-            self.splitFastq(readFile, outputDir, readNo)
-
-
-    def splitFasta(self, readFile, outputDir, readNo):
-        ext = "fasta"
-        num_reads = 0
-
-        out_file_path = self.splitedReadFilePath(outputDir, 1, self.numReadsPerFile, readNo, ext)
-        in_file = open(readFile, "r")
-        out_file = open(out_file_path, "w")
-        for line in in_file:
-            if line[0:1] == ">":
-                if num_reads != 0 and num_reads % self.numReadsPerFile == 0:
-                    out_file.close()
-                    self.gzipFile(out_file_path)
-                    out_file_path = self.splitedReadFilePath(outputDir, num_reads + 1, num_reads + self.numReadsPerFile, readNo, ext)
-                    out_file = open(out_file_path, "w")
-                out_file.write(line)
-                num_reads += 1
-            else:
-                line = line.upper().replace("C", "t")
-                out_file.write(line)
-
-        out_file.close()
-        in_file.close()
-        self.gzipFile(out_file_path)
-        logging.info("%s: the number of reads: %d" % (readFile, num_reads))
-
-
-    def splitFastq(self, readFile, outputDir, readNo):
-        ext = "fastq"
-        num_lines_per_read = 4
-        num_reads = 0
-        line_no = 1
-
-        out_file_path = self.splitedReadFilePath(outputDir, 1, self.numReadsPerFile, readNo, ext)
-        out_fh = open(out_file_path, "w")
-        for line in open(readFile, "r"):
-            if line_no % num_lines_per_read == 2:
-                line = line.upper().replace("C", "t")
-            out_fh.write(line)
-            if line_no % num_lines_per_read == 0:
-                num_reads += 1
-            if line_no % (num_lines_per_read * self.numReadsPerFile) == 0:
-                out_fh.close()
-                self.gzipFile(out_file_path)
-                out_file_path = self.splitedReadFilePath(outputDir, num_reads + 1, num_reads + self.numReadsPerFile, readNo, ext)
-                out_fh = open(out_file_path, "w")
-            line_no += 1
-        out_fh.close()
-        self.gzipFile(out_file_path)
-        logging.info("%s: the number of reads: %d" % (readFile, num_reads))
-
-
-    def makeIndexFile(self):
-        directions = []
-        if not os.path.exists("%s.f.prj" % self.refGenome):
-            directions.append("f")
-        if not os.path.exists("%s.r.prj" % self.refGenome):
-            directions.append("r")
-
-        if len(directions) > 0:
-            last_executor = LastExecutor(self.refGenome, self.dataDir)
-            last_executor.lastdb(directions, self.opts["num_threads"] > 1)
-
-
-    def runLast(self, readAttr):
-        is_paired_end = self.isPairedEnd(readAttr)
-        filter_option = self.filterOpts(is_paired_end)
-        if is_paired_end:
-            last_executor = LastExecutorPairedEnd(self.refGenome, self.dataDir, readAttr["reads_dir"], readAttr["results_dir"])
-        else:
-            last_executor = LastExecutorSingle(self.refGenome, self.dataDir, readAttr["reads_dir"], readAttr["results_dir"])
-
-        last_executor.execute(readAttr, self.opts["num_threads"], self.lastalOpts(readAttr), self.mergeOpts(), filter_option)
-
-
-    def lastalOpts(self, readAttr):
-        return " ".join(self.opts["last_opts"].split(","))
-
-
-    def mergeOpts(self):
-        return ""
-
-
-    def filterOpts(self, isPairedEnd):
-        option = ""
-        if isPairedEnd:
-            option = "-m%f" % self.opts["alignment_mismap_prob_threshold"]
-        else:
-            option = "-s%d -m%f" % (self.opts["alignment_score_threshold"], self.opts["alignment_mismap_prob_threshold"])
-
-        return option
-
-
-    def checkReadFileType(self, readFilePath):
-        name, ext = os.path.splitext(readFilePath)
-        if ext == ".gz":
-            name, ext = os.path.splitext(name)
-
-        if len(ext) > 1:
-            ext = ext[1:]
-
-        file_type = None
-
-        if ext == "sra" or "fastq" or "fasta":
-            file_type = ext
-        elif ext == "fa":
-            file_type = "fasta"
-        else:
-            f = open(readFilePath, "r")
-            first_char = f.read(1)
-            if first_char == "@":
-                file_type = "fastq"
-            elif first_char == ">":
-                file_type = "fasta"
-            else:
-                file_type = "sra"
-            f.close()
-
-        return file_type
-
-
-    def splitedReadFilePath(self, outputDir, start, end, readDirection, ext):
-        return "%s/%010d-%010d_%d.%s" % (outputDir, start, end, readDirection, ext)
-
-
-    def fastqDumpedFilePath(self, outputDir, readName, readDirection = None):
-        path = "%s/%s" % (outputDir, readName)
-        if readDirection:
-            path += "_%d" % readDirection 
-
-        return path + ".fastq"
-
-
-    def isPairedEnd(self, readAttr):
-        return 2 in readAttr
-
-
-    def autoWorkDir(self):
-        now = datetime.now()
-
-        s = ",".join(self.readFilePaths) + self.refGenome
-        for key, value in self.opts.items():
-            s += ("%s:%s" % (key, value))
-        h = md5.new(s).hexdigest()
-
-        return "%s-%06d-%s" % (now.strftime("%Y%m%d-%H%M%S"), now.microsecond, h[0:16])
-        
-
-    def bisulfite_f_seed (self):
-        filename = 'bisulfite_f.seed'
-        if not os.path.exists(filename):
-            file = open(filename, "w")
-            file.write("""
-# This subset seed pattern is suitable for aligning forward strands of
-# bisulfite-converted DNA to unconverted DNA.
-CT A G
-CT A G
-CT A G
-CT A G
-CT A G
-CT A G
-CTAG
-CT A G
-CTAG
-CT A G
-CT A G
-CTAG
-CTAG
-""")
-            file.close()
-        return
-
-
-    def bisulfite_r_seed (self):
-        filename = 'bisulfite_r.seed'
-        if not os.path.exists(filename):
-            file = open(filename, "w")
-            file.write("""
-# This subset seed pattern is suitable for aligning reverse strands of
-# bisulfite-converted DNA to unconverted DNA.
-AG C T
-AG C T
-AG C T
-AG C T
-AG C T
-AG C T
-AGCT
-AG C T
-AGCT
-AG C T
-AG C T
-AGCT
-AGCT
-""")
-            file.close()
-        return
-
-
-    def bisulfite_f_mat (self):
-        filename = 'bisulfite_f.mat'
-        if not os.path.exists(filename):
-            file = open(filename, "w")
-            file.write("""
-# This score matrix is suitable for aligning forward strands of
-# bisulfite-converted DNA queries to unconverted reference sequences.
-    A   C   G   T
-A   6 -18 -18 -18
-C -18   6 -18   3
-G -18 -18   6 -18
-T -18 -18 -18   3
-""")
-            file.close()
-        return
-
-
-    def bisulfite_r_mat (self):
-        filename = 'bisulfite_r.mat'
-        if not os.path.exists(filename):
-            file = open(filename, "w")
-            file.write("""
-# This score matrix is suitable for aligning forward strands of
-# bisulfite-converted DNA queries to unconverted reference sequences.
-    A   C   G   T
-A   3 -18 -18 -18
-C -18   6 -18 -18
-G   3 -18   6 -18
-T -18 -18 -18   6
-""")
-            file.close()
-        return
-
-
-class LastExecutor(BsfCallBase):
-    def __init__(self, refGenome, baseDir=".", readsDir=None, resultsDir=None):
-        self.refGenome = refGenome
-        self.baseDir = baseDir
-        self.readsDir = readsDir
-        self.resultsDir = resultsDir
-        self.queue = Queue.Queue()
-        self.lock = threading.Lock()
-
-
-    def execute(self, readAttr, numThreads, lastalOpts = "", mergeOpts = "", filterOpts = ""):
-        self.enqueue(readAttr)
-
-        threads = []
-        for i in range(numThreads):
-            t = threading.Thread(target=self.worker, args=(readAttr, lastalOpts, mergeOpts, filterOpts))
-            t.daemon = True
-            threads.append(t)
-            t.start()
-
-        for thread in threads:
-            thread.join()
-
-
-    def worker(self, readAttr, lastalOpts, mergeOpts, filterOpts):
-        while True:
-            try:
-                fpath = self.queue.get_nowait()
-                self.runLast(fpath, readAttr, lastalOpts, mergeOpts, filterOpts)
-            except Queue.Empty:
-                break
-
-        
-    def runLast(self, readFile, readAttr, lastalOpts, mergeOpts, filterOpts, rmInFiles = True):
-        cmd = self.batchCmd(readFile, readAttr, lastalOpts, mergeOpts, filterOpts, rmInFiles)
-        logging.debug(cmd)
-        p = subprocess.Popen(cmd, shell = True, stderr = subprocess.PIPE)
-        error = p.stderr
-        p.wait()
-        """
-        error_msg = error.read()
-        if len(error_msg) > 0 and error_msg.lower().find("error") != -1:
-            read_name = self.readNameByReadFile(readFile)
-            self.writeError("%s: %s" % (read_name, error_msg))
-        """
-
-
-    def enqueue(self, readAttr):
-        for read_file in glob.glob("%s/*_1.%s.gz" % (self.readsDir, readAttr[1]["type"])):
-            self.queue.put(read_file)
-
-
-    def writeError(self, error):
-        self.lock.acquire()
-        try:
-            f = open(self.errorFilePath(), "a")
-            f.write(error)
-            f.close()
-        finally:
-            self.lock.release()
-
-
-    def lastdb(self, directions, parallel = False):
-        cmds = []
-        for direction in directions:
-            cmds.append(self.lastdbCmd(direction))
-
-        if parallel:
-            processes = []
-            for cmd in cmds:
-                logging.info(cmd)
-                p = subprocess.Popen(cmd, shell = True, stdout = subprocess.PIPE, stderr = subprocess.STDOUT)
-                out = p.stdout
-                processes.append({"p": p, "out": out})
-            for process in processes:
-                process["p"].wait()
-                out_data = process["out"].read()
-                if len(out_data) > 0:
-                    logging.info(out_data)
-        else:
-            for cmd in cmds:
-                logging.info(cmd)
-                p = subprocess.Popen(cmd, shell = True, stdout = subprocess.PIPE, stderr = subprocess.STDOUT)
-                out = p.stdout
-                p.wait()
-                out_data = out.read()
-                if len(out_data) > 0:
-                    logging.info(out_data)
-
-
-    def lastdbCmd(self, direction):
-        return "lastdb -w2 -u bisulfite_%s.seed %s.%s %s" % (direction, self.refGenome, direction, self.refGenome)
-
-
-    def lastalCmd(self, readFile, direction, opts = ""):
-        if direction == "f":
-            s_opt = "-s1"
-        elif direction == "r":
-            s_opt = "-s0"
-        read_name = self.readNameByReadFile(readFile)
-
-        return "zcat %s | lastal -p bisulfite_%s.mat %s %s %s.%s - > %s" % (readFile, direction, s_opt, opts, self.refGenome, direction, self.mappingResultFilePath(read_name, direction))
-
-
-    def mergeCmd(self, forwardFile, reverseFile, outputFile, opts = "", rmInFiles = True):
-        cmd = "last-merge-batches.py %s %s %s > %s" % (opts, forwardFile, reverseFile, outputFile)
-        if rmInFiles:
-            cmd += "; rm %s %s" % (forwardFile, reverseFile)
-
-        return cmd
-
-
-    def mappingAndMergeCmd(self, readFile, lastalOpts = "", mergeOpts = "", rmInFiles = True):
-        read_name = self.readNameByReadFile(readFile)
-        n, ext = os.path.splitext(readFile)
-        if ext == ".gz":
-            n, ext = os.path.splitext(n)
-        lastal_qopt = self.lastalQopt(ext[1:])
-        lastal_opt = "%s %s" % (lastalOpts, lastal_qopt)
-        mapping_file_f = self.mappingResultFilePath(read_name, "f")
-        mapping_file_r = self.mappingResultFilePath(read_name, "r")
-        merged_file = self.mergeResultFilePath(read_name)
-
-        return "%s; %s; %s" % (self.lastalCmd(readFile, "f", lastal_opt), self.lastalCmd(readFile, "r", lastal_opt), self.mergeCmd(mapping_file_f, mapping_file_r, merged_file, mergeOpts, rmInFiles))
-
-
-    def mappingResultFilePath(self, readName, direction):
-        return "%s/%s_%s" % (self.resultsDir, readName, direction)
-
-
-    def mergeResultFilePath(self, readName):
-        return "%s/%s" % (self.resultsDir, readName)
-
-
-    def filterResultFilePath(self, readName):
-        return "%s/%s.maf" % (self.resultsDir, readName)
-
-
-    def lastalQopt(self, fileType):
-        opt = ""
-        if fileType == "fasta":
-            opt = "-Q0"
-        elif fileType == "fastq":
-            opt = "-Q1"
-
-        return opt
-
-
-    def errorFilePath(self):
-        return "%s/error.txt" % self.baseDir
-
-
-class LastExecutorSingle(LastExecutor):
-    def __init__(self, refGenome, baseDir, readsDir, resultsDir):
-        LastExecutor.__init__(self, refGenome, baseDir, readsDir, resultsDir)
-
-
-    def batchCmd(self, readFile, readAttr, lastalOpts = "", mergeOpts = "", filterOpts = "", rmInFiles = True):
-        read_name = self.readNameByReadFile(readFile)
-        out_file = self.filterResultFilePath(read_name[0:-2])
-
-        cmds = []
-        cmds.append(self.mappingAndMergeCmd(readFile, lastalOpts, mergeOpts, rmInFiles))
-        cmds.append(self.filterCmd(self.mergeResultFilePath(read_name), out_file, filterOpts, rmInFiles))
-        cmds.append("gzip %s" % out_file)
-
-        return "; ".join(cmds)
-
-
-    def filterCmd(self, inputFile, outputFile, opts = "", rmInFile = True):
-        cmd = "last-map-probs.py %s %s > %s" % (opts, inputFile, outputFile)
-        if rmInFile:
-            cmd += "; rm %s" % inputFile
-
-        return cmd
-
-
-class LastExecutorPairedEnd(LastExecutor):
-    def __init__(self, refGenome, baseDir, readsDir, resultsDir):
-        LastExecutor.__init__(self, refGenome, baseDir, readsDir, resultsDir)
-
-
-    def batchCmd(self, readFile1, readAttr, lastalOpts = "", mergeOpts = "", filterOpts = "", rmInFiles = True):
-        read_file2 = self.secondReadFilePathByFirstReadFilePath(readFile1, readAttr[2]["type"])
-        read_files = (readFile1, read_file2)
-
-        filter_cmd_in_file = "%s %s" % (self.mergeResultFilePath(read_files[0]), self.mergeResultFilePath(read_files[1]))
-        read_name1 = self.readNameByReadFile(read_files[0])
-        read_name2 = self.readNameByReadFile(read_files[1])
-        merge_result_file = "%s %s" % (self.mergeResultFilePath(read_name1), self.mergeResultFilePath(read_name2))
-        out_file = self.filterResultFilePath(read_name1[0:-2])
-
-        cmds = []
-        cmds.append(self.mappingAndMergeCmd(read_files[0], lastalOpts, mergeOpts, rmInFiles))
-        cmds.append(self.mappingAndMergeCmd(read_files[1], lastalOpts, mergeOpts, rmInFiles))
-        cmds.append(self.filterCmd(merge_result_file, out_file, filterOpts, rmInFiles))
-        cmds.append("gzip %s" % out_file)
-
-        return "; ".join(cmds)
-
-
-    def filterCmd(self, inputFile, outputFile, opts = "", rmInFile = True):
-        cmd = "last-pair-probs.py %s %s > %s" % (opts, inputFile, outputFile)
-        if rmInFile:
-            cmd += "; rm %s" % inputFile
-
-        return cmd
-
-
-
-class McDetector(BsfCallBase):
-    def __init__(self, refGenome, resultDirs, mcCtxDir, lowerBound, coverageThreshold):
-        self.refGenome = refGenome
-        self.resultDirs = resultDirs
-        self.mcCtxDir = mcCtxDir
-        self.lowerBound = lowerBound
-        self.coverageThreshold = coverageThreshold
-
-        self.refGenomeBuf = []
-        self.targetChr = ""
-        self.targetSeqD = ""
-        self.targetSeqC = ""
-        self.targetSeqLen = 0
-
-        self.mcDetectFh = {}
-
-
-    def execute(self, outputFile, numWorkers=1):
-        for line in open(self.refGenome, "r"):
-            line = line.strip()
-            if line[0] == ">":
-                if self.targetChr != "":
-                    self.executeOneChr()
-                self.targetChr = self.chrnoFromFastaDescription(line)
-            else:
-                self.refGenomeBuf.append(line.upper())
-        self.executeOneChr()
-        self.output(outputFile)
-
-
-    def executeOneChr(self):
-        self.targetSeqD = "".join(self.refGenomeBuf)
-        self.targetSeqD = self.targetSeqD.upper()
-        del self.refGenomeBuf[:]
-        self.targetSeqLen = len(self.targetSeqD)
-        self.targetSeqC = self.complementSeq(self.targetSeqD)
-        self.targetSeqC = self.targetSeqC.upper()
-
-        logging.info("mC detection start: %s (%d)" % (self.targetChr, self.targetSeqLen))
-
-        os.mkdir("%s/%s" % (self.mcCtxDir, self.targetChr))
-        for result_dir in self.resultDirs:
-            for data_file in glob.glob("%s/*.maf.gz" % result_dir):
-                self.readLastResultFile(data_file)
-        self.targetSeqD = ""
-        self.targetSeqC = ""
-        self.targetSeqLen = 0
-        self.closeMcDetectFileHandler()
-
-
-    def output(self, outputFile):
-        if outputFile:
-            out_f = open(outputFile, "w")
-        else:
-            out_f = sys.stdout
-
-        for chr in sorted(os.listdir(self.mcCtxDir), self.chrSort):
-            self.outputByOneChr(chr, out_f)
-
-        if outputFile:
-            out_f.close()
-
-
-    def readLastResultFile(self, resultFile):
-        logging.debug("MAF file: %s start." % resultFile)
-        chr_line = True
-        chr = ""
-        try:
-            f = gzip.open(resultFile, "r")
-            for line in f:
-                tag = line[0]
-                if tag != "s":
-                    continue
-                line = line.strip()
-                tag, name, start, aln_size, strand, seq_size, alignment = line.split()
-                if chr_line:
-                    if name != self.targetChr:
-                        continue
-                    chr = name
-                    gl_alignment = self.clearGap(alignment)
-                    ref_subseqlen = len(gl_alignment)
-                    ref_start = int(start)
-                    ref_seqlen = int(seq_size)
-                    ref_seq = alignment
-                    # alignment = self.clearGap(alignment)
-                    # ref_subseqlen = int(aln_size)
-                    # ref_start = int(start)
-                    # ref_seqlen = int(seq_size)
-                    # ref_seq = alignment
-                else:
-                    if chr == "":
-                        continue
-                    if strand == "-":
-                        ref_start = self.complementStartPosition(ref_seqlen, ref_start, ref_subseqlen)
-                        ref_seq = self.complementSeq(ref_seq)
-                        alignment = self.complementSeq(alignment)
-                    read_seq = alignment.replace("t", "C")
-                    self.extractMcContextsByOneRead(chr, strand, ref_seq.upper(), ref_start, ref_seqlen, read_seq)
-                chr_line = not chr_line
-            f.close()
-            logging.debug("MAF file: %s end." % resultFile)
-        except IOError, e:
-            logging.fatal("%s: %s" % (resultFile, e.args[0]))
-            if f:
-                f.close()
-
-
-    def extractMcContextsByOneRead(self, chr, strand, refSeq, refStart, refSeqLen, readSeq):
-        logging.debug("extractMcContextsByOneRead(%s, %s, %s, %d, %d, %s)" % (chr, strand, refSeq, refStart, refSeqLen, readSeq))
-
-        nogap_refseq = self.clearGap(refSeq)
-        bases = list(refSeq)
-        last_pos = len(nogap_refseq) - 1
-        pos = -1
-        while True:
-            try:
-                pos = bases.index("C", pos + 1)
-                num_gaps = refSeq.count("-", 0, pos)
-                real_pos = pos - num_gaps
-                ctx_type = self.getMcContextType(nogap_refseq, real_pos, last_pos)
-                ctx_pos = refStart + real_pos
-                if ctx_type == None:
-                    if strand == "+":
-                        ctx_type = self.getMcContextType(self.targetSeqD, ctx_pos, self.targetSeqLen - 1)
-                    elif strand == "-":
-                        ctx_type = self.getMcContextType(self.targetSeqC, ctx_pos, self.targetSeqLen - 1)
-                if strand == "-":
-                    ctx_pos = refSeqLen - ctx_pos - 1
-                self.mcDetectFileHandler(ctx_pos).write("%d\t%s\t%s\t%s\n" % (ctx_pos, strand, ctx_type, readSeq[pos]))
-            except IndexError:
-                logging.debug("extractMcContextsByOneRead#IndexError: %s %d %s %s %s %d" % (chr, ctx_pos, strand, ctx_type, readSeq, pos))
-            except ValueError:
-                break
-
-
-    def mcDetectFileHandler(self, pos):
-        outfile = "%s/%s/%010d" % (self.mcCtxDir, self.targetChr, (int(pos) / 100000))
-        if outfile not in self.mcDetectFh:
-            self.mcDetectFh[outfile] = open(outfile, "w")
-
-        return self.mcDetectFh[outfile]
-
-
-    def closeMcDetectFileHandler(self):
-        for f in self.mcDetectFh.values():
-            f.close()
-        self.mcDetectFh.clear()
-
-
-    def outputByOneChr(self, chr, outFh):
-        ctx_dir = "%s/%s" % (self.mcCtxDir, chr)
-        for fname in sorted(os.listdir(ctx_dir)):
-            self.outputByOneMcFile(chr, "%s/%s" % (ctx_dir, fname), outFh)
-
-
-    def outputByOneMcFile(self, chr, fpath, outFh):
-        mc_contexts = {}
-        f = open(fpath, "r")
-        for line in f:
-            try:
-                ctx_pos, strand, mc_ctx, base = line.strip().split("\t")
-                ctx_pos = int(ctx_pos)
-                if not ctx_pos in mc_contexts:
-                    mc_contexts[ctx_pos] = {}
-                if not strand in mc_contexts[ctx_pos]:
-                    mc_contexts[ctx_pos][strand] = {}
-                if not mc_ctx in mc_contexts[ctx_pos][strand]:
-                    mc_contexts[ctx_pos][strand][mc_ctx] = []
-                mc_contexts[ctx_pos][strand][mc_ctx].append(base)
-            except ValueError, e:
-                logging.warning("ValueError: %s: %s -> %s" % (fpath, line.strip(), e.args[0]))
-
-        for pos in sorted(mc_contexts.keys()):
-            for strand in mc_contexts[pos].keys():
-                for mc_ctx in mc_contexts[pos][strand].keys():
-                    coverage, mc_ratio = self.calcCoverage(mc_contexts[pos][strand][mc_ctx])
-                    if coverage >= self.coverageThreshold and mc_ratio >= self.lowerBound:
-                        outFh.write("%s\t%d\t%s\t%s\t%.02f\t%d\n" % (chr, pos, strand, mc_ctx, mc_ratio, coverage))
-
-        f.close()
-        self.gzipFile(fpath, False)
-
-
-    def mcContextHash(self):
-        h = {}
-        for strand in self.strands():
-            h[strand] = {}
-            for mc_ctx in self.mcContextTypes():
-                h[strand][mc_ctx] = {}
-
-        return h
-
-
-    def cSeq(self, seq):
-        return seq[0:1].upper() == "C"
-
-
-    def tSeq(self, seq):
-        return seq[0:1].upper() == "T"
-
-
-    def calcCoverage(self, seqAry):
-        num_seq = len(seqAry)
-        c_ary = filter(self.cSeq, seqAry)
-        t_ary = filter(self.tSeq, seqAry)
-        num_c = len(c_ary)
-        num_t = len(t_ary)
-
-        if num_c + num_t == 0:
-            return (num_seq, 0)
-        else:
-            return (num_seq, float(num_c) / (float(num_c) + float(num_t)))
- 
-
-if __name__ == "__main__":
-    prog = 'bsf-call'
-    usage = """%prog [options] refgenome read1 read2 ...
-  example: %prog -c 10 -m 0.1 -s 250 -o experiment.txt hg19/hg19.fa paired-sample1-1.sra,paired-sample1-2.sra single-sample1"""
-    description = "A mapping of the read bisulfite treated by LAST, to detect methylated cytosine (mC) of the results, and outputs the detection result to the file."
-
-    op = OptionParser(prog=prog, usage=usage, description=description, version="%s-%s" % (prog, __version__))
-
-    op.add_option("-c", "--coverage", type="int", default=5, metavar="C",
-                  help="threshold of read coverate (default: %default)")
-
-    op.add_option("-d", "--pe-direction", type="string", default="ff",
-                  help="direction of paired-end probes: ff, fr, rf, rr (default: %default)")
-
-    op.add_option("-l", "--lower-bound", type="float", default=0.01, metavar="L",
-                  help="threshold of mC ratio (default: %default)")
-
-    op.add_option("-p", "--multi-thread", type="int", default=1, metavar="P",
-                  help="number of threads (default: %default)")
-
-    op.add_option("-s", "", type="int", default=150, metavar="S",
-                  help="threshold of the alignment score at filtering (default: %default)")
-
-    op.add_option("-m", "", type="float", default=0.01, metavar="M",
-                  help="threshold of the mismap probability at filtering (default: %default)")
-
-    op.add_option("", "--last", type="string", default="", metavar="OPT1,OPT2,...",
-                  help="options for LAST (lastal command)")
-
-    op.add_option("-o", "", type="string", default=None, metavar="FILE",
-                  help="output file (default: stdout)")
-
-    op.add_option("-W", "", type="string", default="bsf-call_work", metavar="WORKDIR",
-                  help="work directory (default: %default)")
-
-    op.add_option("", "--work-auto", action="store_true", dest="auto_create_work_dir", default=False,
-                  help="create work directory automatically")
-
-    options, args = op.parse_args()
-
-    work_dir = None
-    if op.has_option("-W"):
-        work_dir = options.W
-    else:
-        if not options.auto_create_work_dir:
-            work_dir = "bsf-call_work"
-
+    ref_genome = args[0]
+    reads = None
+else:
     if len(args) < 2:
         op.error("\n  Reference genome and read sequence is not specified.")
 
     ref_genome = args[0]
     reads = args[1:]
 
-    errors = []
-
-    if not os.path.exists(ref_genome):
-        errors.append("Reference genome: '%s' does not exists." % ref_genome)
     for read_files in reads:
         for read_file in read_files.split(','):
             if not os.path.exists(read_file):
                 errors.append("Read file: '%s' does not exists." % read_file)
 
-    # bisulfite_files = ("bisulfite_f.seed", "bisulfite_r.seed", "bisulfite_f.mat", "bisulfite_r.mat")
-    # for bisulfite_file in bisulfite_files:
-    #     if not os.path.exists(bisulfite_file):
-    #         errors.append("Bisulfite file: '%s' does not exists." % bisulfite_file)
-    
-
     if work_dir and os.path.exists(work_dir):
-        errors.append("Work directory: '%s' already exists." % work_dir)
-        
-    if len(errors) > 0:
-        op.error("\n  " + "\n  ".join(errors))
+        errors.append("Working directory: '%s' already exists." % work_dir)
 
-    cmd_opts = {}
-    cmd_opts["coverage"] = options.coverage
-    cmd_opts["pe_direction"] = options.pe_direction
-    cmd_opts["num_threads"] = options.multi_thread
-    cmd_opts["lower_bound"] = options.lower_bound
-    cmd_opts["alignment_score_threshold"] = options.s
-    cmd_opts["alignment_mismap_prob_threshold"] = options.m
-    cmd_opts["output"] = options.o
-    cmd_opts["last_opts"] = options.last
-    cmd_opts["work_dir"] = work_dir
+if not os.path.exists(ref_genome):
+    errors.append("Reference genome: '%s' does not exists." % ref_genome)
 
-    bsf_call = BsfCall(ref_genome, reads, cmd_opts)
+if len(errors) > 0:
+    op.error("\n  " + "\n  ".join(errors))
+
+cmd_opts = {}
+cmd_opts["coverage"] = options.coverage
+cmd_opts["pe_direction"] = options.pe_direction
+cmd_opts["num_threads"] = options.multi_thread
+cmd_opts["lower_bound"] = options.lower_bound
+cmd_opts["aln_score_thres"] = options.s
+cmd_opts["aln_mismap_prob_thres"] = options.m
+cmd_opts["output"] = options.o
+cmd_opts["last_opts"] = options.last
+cmd_opts["work_dir"] = work_dir
+cmd_opts["use_cluster"] = options.use_cluster
+cmd_opts["queue_list"] = options.q
+cmd_opts["mapping_dir"] = options.M
+cmd_opts["local_dir"] = options.T
+cmd_opts["split_read_size"] = options.r
+
+if cmd_opts["use_cluster"]:
+    cmd_opts["num_threads"] = 1
+    bsf_call = bsfcall.BsfCallCluster(ref_genome, reads, cmd_opts)
+else:
+    bsf_call = bsfcall.BsfCall(ref_genome, reads, cmd_opts)
+
+if not cmd_opts["mapping_dir"]:
     bsf_call.bisulfite_f_seed()
     bsf_call.bisulfite_r_seed()
     bsf_call.bisulfite_f_mat()
     bsf_call.bisulfite_r_mat()
-    bsf_call.execute()
-    sys.exit(0)
+
+bsf_call.execute()
+
+sys.exit(0)

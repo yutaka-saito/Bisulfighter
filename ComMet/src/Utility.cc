@@ -17,6 +17,17 @@ progress(const char* message) {
   cout << message << endl << flush;
 }
 
+void
+progress(const string& message) {
+  cout << message << endl << flush;
+}
+
+string 
+whoami() {
+  string iam = "ComMet v1.0 - identification of differentially methylated regions (DMRs)";
+  return iam;
+}
+
 uint 
 round(float val) {
   return (uint) (val + 0.5);

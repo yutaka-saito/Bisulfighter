@@ -1,35 +1,40 @@
-= ComMet: an HMM-based approach to detection of differentially methylated regions
-
-== Required libraries 
-
-    Boost C++ libraries 
-    http://www.boost.org/
+== ComMet: an HMM-based approach to detection of differentially methylated regions
 
 
-== Build
+==== Required libraries 
 
-    tar xzvf ComMet-xxx.tar.gz
-    cd ComMet-xxx
-    make
+Boost C++ libraries 
+http://www.boost.org/
+
+
+==== Build
+
+$ tar xzvf ComMet-xxx.tar.gz
+$ cd ComMet-xxx
+$ make
 
 You will find the executable in src directory.
 
 
-== Usage
+==== Usage
 
-For help
-    ComMet --help
+For help,
+$ ComMet --help
 
-For test run
-    ComMet example/example.in example/example.out1 example/example.out2
+For test run,
+$ ComMet example/example.in example/example.out1 example/example.out2
 
-For more accurate, but slower DMR detection
-    ComMet --dual example/example.in example/example.out1 example/example.out2
-    ComMet --threshold -5 example/example.in example/example.out1 example/example.out2
-    ComMet --dual --threshold -5 example/example.in example/example.out1 example/example.out2
+For more output DMRs,
+$ ComMet --threshold -5 example/example.in example/example.out1 example/example.out2
+
+For more accurate DMRs, 
+$ ComMet --dual example/example.in example/example.out1 example/example.out2
+
+Combining them, 
+$ ComMet --dual --threshold -5 example/example.in example/example.out1 example/example.out2
 
 
-== Input format
+==== Input format
 
 See example/example.in 
 
@@ -45,8 +50,16 @@ Col.| Description
 reads supporting mC = C-C matches
 reads not supporting mC = otherwise
 
+Make sure chromosome names and genomic positions are sorted by "sort -k1,1 -k2,2n".
 
-== Output format
+Note that input files do not contain strand information. 
+Normally, you should integrate both strands by summing the read counts at two neighbor CpGs,
+i.e. the 5'-CpG-3' in the plus strand, and the neighboring 3'-GpC-5' in the minus strand. 
+Alternatively, if you are interested in strand-specific DMRs, you can prepare two input files 
+for plus and minus strands, and apply them to ComMet separately. 
+
+
+==== Output format
 
 output1 contains information of differential methylation at individual cytosines.
 See example/example.out1_
@@ -59,7 +72,7 @@ Col.| Description
 4   | mC ratio in sample2 
 5   | prob. for hypermethylation (UP) in sample1 against sample2
 6   | prob. for hypomethylation (DOWN) in sample1 against sample2
-7   | prob. for no methylation change (NC) between sample1 and sample2
+7   | prob. for no methylation change (NoCh) between sample1 and sample2
 
 output2 contains information of detected DMRs. 
 See example/example.out2_
@@ -73,7 +86,41 @@ Col.| Description
 5   | log-likelihood ratio score 
 
 
-== Bisulfighter
+==== FAQ
+
+Q. What is the meaning of the error "distance between neighbor CpGs must not be less than 2"?
+A. 
+Your input file contains invalid genomic positions. 
+By definition of CpG, the base next to C must be G, and therefore two neighbor CpGs should be 
+separated by at least two bases. Your input file may violate this rule for several reasons.  
+First, the input file may contain two neighbor CpGs from different strands, 
+i.e. the 5'-CpG-3' in the plus strand, and the neighboring 3'-GpC-5' in the minus strand. 
+See the "Input format" section above for this issue. 
+Second, the input file may contain cytosines in non-CpG context; just remove them. 
+
+Q. Does ComMet support DMRs in non-CpG context (CHG or CHH)?
+A. 
+No. But we are planning to address this issue in the next version of ComMet.
+
+Q. The read counts in the example input file are decimals rather than integers. Why?
+A. 
+Either decimals or integers can be used for read counts in input files. 
+The reason that the example input file contains decimals is that some alignment tools produce 
+probability-weighted read counts. Of course, you can use your favorite aligners for preparing 
+input files that may contain integers only.
+
+
+==== History
+
+* version 1.0
+- tuned the default parameters
+- added the FAQ in README
+
+* version 0.1 
+- implemented the algorithms described in [Saito et al., Nucleic Acids Res, 2013]
+
+
+==== Bisulfighter
 
 ComMet was first developed as the DMR detection module in Bisulfighter, 
 a software package for mC calling and DMR detection. 
@@ -81,21 +128,21 @@ Compatibility between ComMet and the mC calling module in Bisulfighter is
 kept by input-output transformation scripts in util directory.
 
 
-== License
+==== License
 
 Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
 http://creativecommons.org/licenses/by-nc-sa/3.0/
 
 
-== References
+==== References
 
-Y. Saito, J. Tsuji, T. Mituyama,
+Yutaka Saito, Junko Tsuji, and Toutai Mituyama,
 Bisulfighter: accurate detection of methylated cytosines and differentially methylated regions,
-submitted.
+Nucleic Acids Research, accepted for publication, 2013.
 
 
-== Contact
+==== Contact
 
-Yutaka SAITO
+Yutaka Saito
 yutaka.saito AT aist.go.jp
 

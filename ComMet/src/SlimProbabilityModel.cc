@@ -30,7 +30,7 @@ reset(const MethylList& met, ValueType alpha)
   for (uint i=0; i!=dpsize_-1; ++i) {
     Dist[i] = met.pos_[i+1] - met.pos_[i];
     if (Dist[i] < 2) {
-      cout << "error: distance between neighbor CpGs must not be less than 2" << met.name_ << endl;
+      cout << "error: distance between neighbor CpGs must not be less than 2 " << met.name_ << endl;
       return false;
     }
   }
