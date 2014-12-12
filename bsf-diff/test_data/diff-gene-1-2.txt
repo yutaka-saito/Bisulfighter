@@ -1,0 +1,5 @@
+# bsf_diff: Defferentially Methylated Region Detection Tool For Bisulphyte Data
+# Copyright 2013 Computational Biology Research Center, AIST. All rights reserved.
+# /home/ishikawa/workspace/bsf_diff/bsf_diff/bsf_diff.py --gtf small.gtf --c-samples 3 sample1_1.tsv,sample1_2.tsv sample2.tsv
+# 01/15/2013 17:00:40 ()
+NM_199280	0.872250	0.027500	0.030636	0.042057	DMR0000002

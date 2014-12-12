@@ -1,0 +1,83 @@
+Bisulfighter::bsf-call
+
+NAME
+	Bisulfighter::bsf-call - a python script for short read mapping and methylated cytosine (mC) detection
+
+SYNOPSIS
+	bsf-call [options] <reference_genome> <sequence_files>
+
+OPTIONS
+	-c <integer>, --coverage=<integer>
+		Specify the threshold for valid read coverage for mC detection (default: 5).
+
+	-l <float>, --lover-bound=<float>
+		Specify the threshold for valid mC rate (default: 0.01).
+
+	-s <integer>
+		Specify the threshold for valid alignment score (default: 150)
+		
+	-m <float>
+		Specify the threshold for filtering mis-mapping probability (default: 0.01)
+
+	-p <integer>, --multi-thread=<integer>
+		Specify the number of threads (default: 1)
+
+	-o <filename>
+		Specify the filename for the output (default: stdout)
+
+	--last=<opt,opt,...>
+		Specify options passed to lastal command.
+		"-s" and "-Q" options are automatically specified by bsf-call.
+
+	-W <path>
+		Specify the working directory (default: ./bsf-call_work ).
+
+	--work-wuto
+		Let bsf-call determine the working directory automatically.
+		-W option cancels this option.
+
+REFERENCE_GENOME
+	Specify the filename for the reference genome, which is a multi-fasta file.
+	Example: hg19/hg19.fa
+
+SEQUENCE_FILES
+	Specify a list of sequence files to be mapped.
+	Supports FASTQ, SRA and FASTA.
+	File formats are identified with extention of input filenames.
+	
+	Example:
+	1) multiple single reads
+		single-sample1.fastq single-sample2.fastq
+	2) multiple paired reads
+		paired-sample1-1.fastq,paired-sample1-2.fastq paired-sample2-1.fastq,paired-sample2-2.fastq
+	3) mixture of single and paired reads
+		single-sample1.fastq paired-sample1-1.fastq,paired-sample1-2.fastq
+
+EXAMPLE
+	bsf-call -c 10 -m 0.1 -s 250 -o experiment.txt --last=-d108,-e120,-i1 -W mywork hg19/hg19.fa paired-sample1-1.fastq,paired-sample1-2.fastq single-sample1.fasta
+
+OUTPUT FORMAT
+	bsf-call outputs six column tab-delimited text file.
+	Col.| Description
+	----+--------------------------------------
+	1   | chromosome label (e.g. chr1)
+	2   | genomic position (0-based)
+	3   | strand (+,-)
+	4   | mC context (CG, CHG, CHH)
+	5   | mC rate (float)
+	6   | read coverage
+
+	Example:
+	chr1	45241	+	CG	0.72	19
+	chr2	71345	+	CHG	0.04	21
+	chr10	71345	-	CHH	0.07	5
+	chrX	52123	+	CG	0.21	21
+
+AUTHOR
+	Junko Tsuji
+	Toutai Mituyama
+
+LICENSE
+	Bisulfighter (http://epigenome.cbrc.jp/bisulfighter) by National Institute of Advanced Industrial Science and Technology (AIST)
+	is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
+	http://creativecommons.org/licenses/by-nc-sa/3.0/

@@ -1,0 +1,104 @@
+bsf-diff user manual
+
+1	Introduction 
+bsf-diff is a methylation analysis tool for bisulphite next-generation sequence data. It is used to detect 
+ Differentially Methylated Region (DMR) between two samples.  
+
+2	OS requirement 
+Linux, Mac OS X (Windows is not available, because rpy cannot be installed on it) 
+
+3	Installation
+ 3.1	Prerequisite 
+ The following softwares are required for bsf_diff execution. Please install them.
+
+  3.1.1	Python (2.4 or higher) 
+  URL) http://www.python.org/ 
+  By default, python interpreter is available in almost all linux or mac os. If this is not the case, 
+  follow the installation instruction on the python web page. 
+
+  3.1.2	R (2.0.0 or higher) 
+  URL) http://www.r-project.org/ 
+  R package could be available by package management software (apt-get for ubuntu, yum for
+centos). 
+  If not available, follow the installation instruction on the python web page.
+  http://cran.r-project.org/doc/manuals/r-release/R-admin.html 
+
+  3.1.3	locfit 
+  URL) http://cm.bell-labs.com/cm/ms/departments/sia/project/locfit/index.html 
+  R library for Local Regression and Likelihood (used for smoothing in bsf-diff). 
+  In R console, execute the following command to install. 
+  > install.packages("locfit") 
+
+  3.1.4	rpy (1.0.*) 
+  URL) http://rpy.sourceforge.net/rpy.html 
+  R-wrapper for python. 
+  Download rpy zip file, and unzip it, cd into it. Execute the following command to install. 
+  $ python setup.py install 
+
+ 3.2	Install 
+ As provided as python scripts, no installation procedure is required for bsf-diff itself. 
+
+4	Usage 
+Command line usage is as follows.  
+
+ bsf_diff.py [options] sample1_rep1[,sample1_rep2,...] sample2_rep1[,sample2_rep2,...] [sampleN_rep1,sampleN_rep2]
+  
+Main arguments are input data file name. Input data file format is described in section 5. If multiple 
+replicates exist for one sample, these replicate file names must be concatenated by a comma (ex: 
+sample_rep1,sample_rep2). If more than two samples are provided, all pairs between these samples will 
+be analyzed. 
+ 
+Options are as follows. 
+  
+  --version             show program's version number and exit
+  -h, --help            show this help message and exit
+  -s, --smooth          smooth methylation rate data before DMR detection
+                        [default: False]
+  --smooth-window=<Integer>
+                        width of smoothing window [default: 100]
+  -t <BED file name>, --target=<BED file name>
+                        target region in BED4 format. if this option is on,
+                        only target region is checked to be DMR or not
+  --gtf=<GTF file name>
+                        genes in GTF (Gene Transfer Format). tell bsf_diff to
+                        check DMRs are associated with these genes
+  --assoc-dist=<[+-]?Integer>
+                        max DMR association distance for upstream and/or
+                        downstream of gene. exp) +3000
+  -p <Float>            p-value threshold for chi-square test and t-test
+                        [default: 0.0001]
+  -c <Integer>, --coverage=<Integer>
+                        minimum coverage at mC position in DMR [default: 5]
+  --filter=CG[, CHG[,CHH]
+                        mC context to be called DMR. [default: CG]
+  -l String[,String], --label=String[,String]
+                        camma-separated label strings for sample name in DMR
+                        output file [default: Sample1,Sample2]
+  --neighbor-dist=<Integer>
+                        max distance between neighboring mC positions in DMR
+                        [default: 100]
+  -m <Integer>, --multi-thread=<Integer>
+                        number of threads [default: 1]
+  --c-samples=<Integer>
+                        minimum number of mCs for DMR [default: 5]
+  --min-width=<Integer>
+                        minimum width of DMR [default: 100] 
+
+5	Input file 
+A sample file or replicate file contains methylation state information. One line for one mC position. 
+Lines must be sorted by chromosome name and position. Each line has the following columns. 
+ 
+6	Output files
+ 6.1	DMR output 
+ File name is "gene diff-dmr-$i-$j.txt". $i is i-th sample name, $j is j-th sample name. 
+ Each line stands for a DMR detected, and has the following columns. 
+ 
+ 6.2	Associated genes 
+ Output only when --gtf option is provided. 
+ File name is "gene diff-gene-$i-$j.txt". $i is i-th sample name, $j is j-th sample name. 
+ Each line stands for a gene associated with detected DMRs, and has the following columns. 
+ 
+7	Example 
+bsf-diff package include test data in test_data directory. You can try the command below in test_data 
+directory. 
+ 

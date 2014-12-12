@@ -1,0 +1,101 @@
+= ComMet: an HMM-based approach to detection of differentially methylated regions
+
+== Required libraries 
+
+    Boost C++ libraries 
+    http://www.boost.org/
+
+
+== Build
+
+    tar xzvf ComMet-xxx.tar.gz
+    cd ComMet-xxx
+    make
+
+You will find the executable in src directory.
+
+
+== Usage
+
+For help
+    ComMet --help
+
+For test run
+    ComMet example/example.in example/example.out1 example/example.out2
+
+For more accurate, but slower DMR detection
+    ComMet --dual example/example.in example/example.out1 example/example.out2
+    ComMet --threshold -5 example/example.in example/example.out1 example/example.out2
+    ComMet --dual --threshold -5 example/example.in example/example.out1 example/example.out2
+
+
+== Input format
+
+See example/example.in 
+
+Col.| Description
+----+--------------------------------------
+1   | chromosome name 
+2   | 0-based genomic position
+3   | number of reads supporting mC in sample1
+4   | number of reads not supporting mC in sample1
+5   | number of reads supporting mC in sample2
+6   | number of reads not supporting mC in sample2
+
+reads supporting mC = C-C matches
+reads not supporting mC = otherwise
+
+
+== Output format
+
+output1 contains information of differential methylation at individual cytosines.
+See example/example.out1_
+
+Col.| Description
+----+--------------------------------------
+1   | chromosome name 
+2   | 0-based genomic position
+3   | mC ratio in sample1
+4   | mC ratio in sample2 
+5   | prob. for hypermethylation (UP) in sample1 against sample2
+6   | prob. for hypomethylation (DOWN) in sample1 against sample2
+7   | prob. for no methylation change (NC) between sample1 and sample2
+
+output2 contains information of detected DMRs. 
+See example/example.out2_
+
+Col.| Description
+----+--------------------------------------
+1   | chromosome name 
+2   | 0-based genomic start position
+3   | 0-based genomic stop position
+4   | direction of differential methylation (UP/DOWN) comparing sample1 to sample2
+5   | log-likelihood ratio score 
+
+
+== Bisulfighter
+
+ComMet was first developed as the DMR detection module in Bisulfighter, 
+a software package for mC calling and DMR detection. 
+Compatibility between ComMet and the mC calling module in Bisulfighter is 
+kept by input-output transformation scripts in util directory.
+
+
+== License
+
+Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
+http://creativecommons.org/licenses/by-nc-sa/3.0/
+
+
+== References
+
+Y. Saito, J. Tsuji, T. Mituyama,
+Bisulfighter: accurate detection of methylated cytosines and differentially methylated regions,
+submitted.
+
+
+== Contact
+
+Yutaka SAITO
+yutaka.saito AT aist.go.jp
+
