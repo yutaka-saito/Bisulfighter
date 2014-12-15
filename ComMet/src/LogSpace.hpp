@@ -1,11 +1,11 @@
-#ifndef __INC_LOGSPACE_HH__
-#define __INC_LOGSPACE_HH__
-
 /////////////////////////////////////////////////////////////////
 // LogSpace.hpp
 //
 // Routines for dealing with numbers in log space.
 /////////////////////////////////////////////////////////////////
+
+#ifndef LOGSPACE_HPP
+#define LOGSPACE_HPP
 
 #include <cmath>
 
@@ -21,9 +21,6 @@ template<> inline long double Log(const long double x) { return logl(x); }
 
 
 #define NEG_INF -2e20
-
-#define MAX_SCL_DIF 30
-//#define MAX_SCL_DIF 100
 
 /////////////////////////////////////////////////////////////////
 // Fast_Exp
@@ -80,7 +77,7 @@ inline float Fast_Exp(float x)
 
 inline double Fast_LogExpPlusOne(double x)
 {
-    Assert(double(0) <= x && x <= double(MAX_SCL_DIF), "Argument out-of-range.");
+    Assert(double(0) <= x && x <= double(30), "Argument out-of-range.");
     return log (exp(x) + double(1));
 }
 
@@ -149,7 +146,7 @@ inline float Fast_LogExpPlusOne(float x){
 
 inline double Fast_LogExpMinusOne(double x)
 {
-    Assert(double(0) <= x && x <= double(MAX_SCL_DIF), "Argument out-of-range.");
+    Assert(double(0) <= x && x <= double(30), "Argument out-of-range.");
     return log(exp(x) - double(1));
 }
 
@@ -231,7 +228,7 @@ inline float Fast_LogExpMinusOne(float x)
 inline double Fast_LogAdd(double x, double y)
 {
     if (x < y) std::swap (x, y);
-    if (y <= double(NEG_INF/2) || x-y >= double(MAX_SCL_DIF)) return x;
+    if (y <= double(NEG_INF/2) || x-y >= double(30)) return x;
     return Fast_LogExpPlusOne(x-y) + y;
 }
 
@@ -245,7 +242,7 @@ inline float Fast_LogAdd(float x, float y)
 inline void Fast_LogPlusEquals (double &x, double y)
 {
     if (x < y) std::swap (x, y);
-    if (y > double(NEG_INF/2) && x-y < double(MAX_SCL_DIF))
+    if (y > double(NEG_INF/2) && x-y < double(30))
         x = Fast_LogExpPlusOne(x-y) + y;
 }
 
@@ -266,7 +263,7 @@ inline void Fast_LogPlusEquals (float &x, float y)
 inline double Fast_LogSubtract (double x, double y)
 {
     Assert(x > y, "Cannot represent negative numbers in log space.");
-    if (y <= double(NEG_INF/2) || x-y >= double(MAX_SCL_DIF)) return x;
+    if (y <= double(NEG_INF/2) || x-y >= double(30)) return x;
     return Fast_LogExpMinusOne(x-y) + y;
 }
 
@@ -280,7 +277,7 @@ inline float Fast_LogSubtract (float x, float y)
 inline void Fast_LogMinusEquals (double &x, double y)
 {
     Assert(x > y, "Cannot represent negative numbers in log space.");
-    if (y > double(NEG_INF/2) && x-y < double(MAX_SCL_DIF))
+    if (y > double(NEG_INF/2) && x-y < double(30))
         x = Fast_LogExpMinusOne(x-y) + y;
 }
 

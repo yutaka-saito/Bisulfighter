@@ -1,30 +1,32 @@
+// ComMet
+// by National Institute of Advanced Industrial Science and Technology (AIST)
+// is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
+// http://creativecommons.org/licenses/by-nc-sa/3.0/
+
+
 #include <iostream>
 #include <cassert>
 
-#include "ProbabilityModel.hh"
+#include "ProbabilityModel.h"
 
 using namespace std;
 
 bool ProbabilityModel::
-reset(const MethylList& met, const GlobalStatistics& gstat, bool noncpg)
+reset(const MethylList& met, ValueType alpha)
 {
-  // noncpg_
-  noncpg_ = noncpg;
-
   // dpsize_
   dpsize_ = met.pos_.back() - met.pos_[0] + 1;
   cout << "DP size: " << dpsize_ << endl;
-  if (dpsize_ < 2 || met.pos_size() < 2) {
+  if (dpsize_ < 2 || met.pos_.size() < 2) {
     cout << "skipped sequence: " << met.name_ << endl;
     return false;
   }
 
   // dist
-  for (uint i=0; i!=met.pos_size()-1; ++i) {
+  for (uint i=0; i!=met.pos_.size()-1; ++i) {
     uint dist = met.pos_[i+1] - met.pos_[i];
-    if (dist < 2 && (! noncpg_)) {
-      cout << "error: distance between neighbor CpGs must not be less than 2," << endl
-	   << met.name_ << " " << met.pos_[i] << " " << met.pos_[i+1] << endl;
+    if (dist < 2) {
+      cout << "error: distance between neighbor CpGs must not be less than 2 " << met.name_ << endl;
       return false;
     }
   }
@@ -62,7 +64,7 @@ reset(const MethylList& met, const GlobalStatistics& gstat, bool noncpg)
   flg_bwd_ = false;
 
   // InitProb, TransProb, EmitProb
-  reset_param(met, gstat);
+  reset_param(met, alpha);
 
   return true;
 }
@@ -308,7 +310,7 @@ fwdbwd()
 void ProbabilityModel::
 em(uint nitr, bool verbose) 
 {
-  const ValueType tolerance = 1e-4;
+  const ValueType torelance = 1e-4;
 
   if (verbose) {
     print_param(true);
@@ -369,11 +371,11 @@ em(uint nitr, bool verbose)
     for (uint j=0; j!=NState; ++j) {
       if (ex_init[j] > 0.0) {
 	ValueType val = ex_init[j] / sum;
-	if (fabs(Exp(InitProb[j]) - val) > tolerance) conv = false;
+	if (fabs(Exp(InitProb[j]) - val) > torelance) conv = false;
 	InitProb[j] = Log(val);
       }
       else {
-	if (Exp(InitProb[j]) > tolerance) conv = false;
+	if (Exp(InitProb[j]) > torelance) conv = false;
 	InitProb[j] = NEG_INF;
       }
     }
@@ -385,11 +387,11 @@ em(uint nitr, bool verbose)
       for (uint k=0; k!=NState; ++k) {
 	if (ex_trans[j][k] > 0.0) {
 	  ValueType val = ex_trans[j][k] / sum;
-	  if (fabs(Exp(TransProb[j][k]) - val) > tolerance) conv = false;
+	  if (fabs(Exp(TransProb[j][k]) - val) > torelance) conv = false;
 	  TransProb[j][k] = Log(val);
 	}
 	else {
-	  if (Exp(TransProb[j][k]) > tolerance) conv = false;
+	  if (Exp(TransProb[j][k]) > torelance) conv = false;
 	  TransProb[j][k] = NEG_INF;
 	}
       }

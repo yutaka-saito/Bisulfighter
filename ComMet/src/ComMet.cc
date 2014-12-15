@@ -1,15 +1,21 @@
+// ComMet
+// by National Institute of Advanced Industrial Science and Technology (AIST)
+// is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
+// http://creativecommons.org/licenses/by-nc-sa/3.0/
+
+
 #include <string>
 #include <iostream>
 #include <boost/program_options.hpp>
 #include <boost/bind.hpp>
 
-#include "Utility.hh"
-#include "FrameworkComMet.hh"
-#include "NaiveModel.hh"
-#include "DualModel.hh"
-#include "SlimNaiveModel.hh"
-#include "SlimDualModel.hh"
-#include "Data.hh"
+#include "Utility.h"
+#include "FrameworkComMet.h"
+#include "NaiveModel.h"
+#include "CGIModel.h"
+#include "SlimNaiveModel.h"
+#include "SlimCGIModel.h"
+#include "Data.h"
 
 using namespace std;
 using namespace boost;
@@ -20,10 +26,11 @@ main(int argc, char** argv)
 {
   progress(whoami());
 
-  // parse command line options
   Options opts;
+
+  // parse command line options
   po::options_description desc("Options");
-  desc.add_options()("help", "show this message");
+  desc.add_options()("help,h", "show this message");
   opts.add_options(desc);
 
   po::variables_map vm;
@@ -50,20 +57,27 @@ main(int argc, char** argv)
 
   opts.parse_extra_args(extra_args);
 
-  if (opts.noncpg) {
-    cout << "NOTE: You have specified --noncpg option, which is currently only for testing use." << endl
-	 << "See README for some tips about detection of DMRs in non-CpG context." << endl;
-    opts.dsep = 1000000;
-    opts.nodual = true;
-  }
-
-  bool res = false;
-
   typedef DataLoaderFactory LDF;
   LDF ldf;
+
+  bool res = false;
   try {
-    if (opts.nodual) {
-      if (opts.noslim) { 
+    if (opts.dual) {
+      if (opts.noslim) {
+	typedef CGIModel MDL;
+	MDL mdl;
+	App<LDF,MDL> app(ldf,mdl,opts);
+	res = app.execute();
+      }
+      else {
+	typedef SlimCGIModel MDL;
+	MDL mdl;
+	App<LDF,MDL> app(ldf,mdl,opts);
+	res = app.execute();
+      }
+    }
+    else {
+      if (opts.noslim) {
 	typedef NaiveModel MDL;
 	MDL mdl;
 	App<LDF,MDL> app(ldf,mdl,opts);
@@ -76,23 +90,9 @@ main(int argc, char** argv)
 	res = app.execute();
       }
     }
-    else {
-      if (opts.noslim) {
-	typedef DualModel MDL;
-	MDL mdl;
-	App<LDF,MDL> app(ldf,mdl,opts);
-	res = app.execute();
-      }
-      else { // default mode
-	typedef SlimDualModel MDL;
-	MDL mdl;
-	App<LDF,MDL> app(ldf,mdl,opts);
-	res = app.execute();
-      }
-    }
-  }
+  } 
   catch (const char* str) {
-    cout << str << endl;
+    std::cout << str << std::endl;
   }
 
   return res ? 0 : 1;

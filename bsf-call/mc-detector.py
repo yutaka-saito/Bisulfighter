@@ -33,12 +33,7 @@ except Exception:
     mismap = 0.01
 
 try:
-    target_format = sys.argv[9]
-except:
-    target_format = "MAF"
-
-try:
-    local_dir = (sys.argv[10])
+    local_dir = (sys.argv[9])
 except Exception:
     local_dir = None
 
@@ -72,7 +67,6 @@ logging.info("  Chromosome: %s" % chr_no)
 logging.info("  Threshold of read coverate: %d" % coverage_threshold)
 logging.info("  Threshold of mC ratio: %s" % str(lower_bound))
 logging.info("  Threshold of the mismap probability at filtering: %s" % str(mismap))
-logging.info("  Target mapping file format: %s" % target_format)
 logging.info("  Local directory: %s" % local_dir)
 
 options = {}
@@ -81,16 +75,6 @@ options["lower_bound"] = lower_bound
 options["coverage"] = coverage_threshold
 options["aln_mismap_prob_thres"] = mismap
 options["local_dir"] = local_dir
-
-options["read_bam"] = False
-options["read_sam"] = False
-options["bam2sam_dir"] = None
-
-if target_format == "SAM":
-    options["read_sam"] = True
-elif target_format[0:3] == "BAM":
-    options["read_bam"] = True
-    options["bam2sam_dir"] = target_format[4:]
 
 mc_detector = bsfcall.McDetector(refgenome, mapping_dirs, work_dir, options)
 mc_detector.processOneChr(chr_no)

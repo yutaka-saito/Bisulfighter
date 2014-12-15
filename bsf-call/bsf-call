@@ -8,11 +8,12 @@ is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Un
 http://creativecommons.org/licenses/by-nc-sa/3.0/
 """
 
-__version__= "1.0"
+__version__= "0.9"
 
 from optparse import OptionParser
 import os
 import sys
+import bsfcall
 
 prog = 'bsf-call'
 usage = """%prog [options] refgenome read1 read2 ...
@@ -66,12 +67,6 @@ op.add_option("-T", "", type="string", metavar="LOCAL_DIR",
 op.add_option("-r", "", type="string", default="100M", metavar="SPLIT_READ_SIZE",
               help="split read size")
 
-op.add_option("", "--bam", action="store_true", dest="read_bam", default=False,
-              help="read BAM file for mC detection")
-
-op.add_option("", "--sam", action="store_true", dest="read_sam", default=False,
-              help="read SAM file for mC detection")
-
 options, args = op.parse_args()
 
 errors = []
@@ -91,20 +86,11 @@ if options.M:
         if not os.path.exists(result_dir):
             errors.append("Mapping result directory: '%s' does not exists." % options.M)
 
-    if options.read_bam and options.read_sam:
-        errors.append("--bam and --sam cannot be placed simultaneously.")
-
     ref_genome = args[0]
     reads = None
 else:
     if len(args) < 2:
         op.error("\n  Reference genome and read sequence is not specified.")
-
-    if options.read_bam:
-        errors.append("--bam option is specified but -M option is not specified.")
-
-    if options.read_sam:
-        errors.append("--sam option is specified but -M option is not specified.")
 
     ref_genome = args[0]
     reads = args[1:]
@@ -119,12 +105,6 @@ else:
 
 if not os.path.exists(ref_genome):
     errors.append("Reference genome: '%s' does not exists." % ref_genome)
-
-if options.read_bam or options.read_sam:
-    try:
-        import pysam
-    except:
-        errors.append("--bam or --sam is specified but pysam is not installed.")
 
 if len(errors) > 0:
     op.error("\n  " + "\n  ".join(errors))
@@ -144,10 +124,6 @@ cmd_opts["queue_list"] = options.q
 cmd_opts["mapping_dir"] = options.M
 cmd_opts["local_dir"] = options.T
 cmd_opts["split_read_size"] = options.r
-cmd_opts["read_bam"] = options.read_bam
-cmd_opts["read_sam"] = options.read_sam
-
-import bsfcall
 
 if cmd_opts["use_cluster"]:
     cmd_opts["num_threads"] = 1

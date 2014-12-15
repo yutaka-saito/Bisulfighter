@@ -1,13 +1,18 @@
-#ifndef __INC_SLIM_NAIVE_MODEL_HH__
-#define __INC_SLIM_NAIVE_MODEL_HH__
+// ComMet
+// by National Institute of Advanced Industrial Science and Technology (AIST)
+// is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
+// http://creativecommons.org/licenses/by-nc-sa/3.0/
+
+
+#ifndef __INC_SLIM_NAIVE_MODEL_H__
+#define __INC_SLIM_NAIVE_MODEL_H__
 
 #include <fstream>
 #include <vector>
 
-#include "Utility.hh"
-#include "SlimProbabilityModel.hh"
-#include "GlobalStatistics.hh"
-#include "Data.hh"
+#include "Utility.h"
+#include "SlimProbabilityModel.h"
+#include "Data.h"
 
 class SlimNaiveModel : public SlimProbabilityModel 
 {
@@ -29,7 +34,7 @@ public:
   ~SlimNaiveModel() {}
 
 public:
-  void reset_param(const MethylList& met, const GlobalStatistics& gstat);
+  void reset_param(const MethylList& met, ValueType alpha);
   void dbase(std::ofstream& ofs, const MethylList& met);
   void dregion(std::ofstream& ofs, const MethylList& met, const std::vector<uint>& path);
   void dregion_viterbi(std::ofstream& ofs, const MethylList& met);

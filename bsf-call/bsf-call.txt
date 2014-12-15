@@ -10,9 +10,6 @@ OPTIONS
 	-c <integer>, --coverage=<integer>
 		Specifies the threshold for valid read coverage for mC detection (default: 5).
 
-	-d <string>, --pe-derection=<string>
-		Specifies the direction of paired-end probes: ff, fr, rf, rr (default: ff).
-
 	-l <float>, --lover-bound=<float>
 		Specifies the threshold for valid mC rate (default: 0.01).
 
@@ -53,15 +50,6 @@ OPTIONS
 		Only mC-detection is performed by using mapping results stored in <directory>.
 		Subdirectories are searched for finding mapping files in MAF format.
 
-	--bam
-		Read BAM files for mC detection. Combined with -M option.
-
-	--sam
-		Read SAM files for mC detection. Combined with -M option.
-
-	-r <string>
-		Specifies the split read size. (default: 100M)
-
 
 REQUIRED FILES
 	The following files should stay in the same directory:
@@ -95,10 +83,10 @@ EXAMPLES
 	bsf-call -c 10 -m 0.1 -s 250 -o experiment.txt --last=-d108,-e120,-i1 -W mywork hg19/hg19.fa paired-sample1-1.fastq,paired-sample1-2.fastq single-sample1.fasta
 
 	Case 2)
-	bsf-call -n c 10 m 0.1 s 250 o result.txt --last=-d108,-e120,-i1 -W mywork hg19/hg19.fa paired-sample1-1.fastq,paired-sample1-2.fastq single-sample1.fasta
+	bsf-call -n -c 10 -m 0.1 -s 250 -o result.txt --last=-d108,-e120,-i1 -W mywork hg19/hg19.fa paired-sample1-1.fastq,paired-sample1-2.fastq single-sample1.fasta
 
 	Case 3)
-	bsf-call -n -M mapping_resdir1,mapping_resdir2 c 10 m 0.1 -o result.txt --last=-d108,-e120,-i1 -W mywork hg19/hg19.fa
+	bsf-call -n -M mapping_resdir1,mapping_resdir2 -c 10 -m 0.1 -o result.txt -W mywork hg19/hg19.fa
 
 
 
@@ -143,4 +131,3 @@ LICENSE
 	Bisulfighter (http://epigenome.cbrc.jp/bisulfighter) by National Institute of Advanced Industrial Science and Technology (AIST)
 	is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
 	http://creativecommons.org/licenses/by-nc-sa/3.0/
-

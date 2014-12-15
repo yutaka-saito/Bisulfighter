@@ -1,12 +1,17 @@
-#ifndef __INC_SLIM_PROBABILITY_MODEL_HH__
-#define __INC_SLIM_PROBABILITY_MODEL_HH__
+// ComMet
+// by National Institute of Advanced Industrial Science and Technology (AIST)
+// is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
+// http://creativecommons.org/licenses/by-nc-sa/3.0/
+
+
+#ifndef __INC_SLIM_PROBABILITY_MODEL_H__
+#define __INC_SLIM_PROBABILITY_MODEL_H__
 
 #include <fstream>
 #include <vector>
 
-#include "Utility.hh"
-#include "GlobalStatistics.hh"
-#include "Data.hh"
+#include "Utility.h"
+#include "Data.h"
 
 class SlimProbabilityModel {
 protected:
@@ -18,8 +23,8 @@ protected:
   virtual ~SlimProbabilityModel() {}
 
 public:
-  bool reset(const MethylList& met, const GlobalStatistics& gstat, bool noncpg);
-  virtual void reset_param(const MethylList& met, const GlobalStatistics& gstat) = 0;
+  bool reset(const MethylList& met, ValueType alpha);
+  virtual void reset_param(const MethylList& met, ValueType alpha) = 0;
   void print_param(bool logspc);
   void print_table(const std::vector<std::vector<ValueType> >& tbl, bool logspc);
 
@@ -41,7 +46,7 @@ protected:
   std::vector<ValueType> InitProb;
   std::vector<std::vector<ValueType> > TransProb;
   std::vector<std::vector<ValueType> > EmitProb;
-  // TransProbDist[j-NCPGState][i] = (Dist[i] - 2) * TransProb[j][j]
+  // TransProbDist[j][i] = (Dist[i] - 2) * TransProb[j][j]
   std::vector<std::vector<ValueType> > TransProbDist;
   std::vector<uint> Dist;
 
@@ -56,7 +61,6 @@ protected:
   // forward-backward and posterior probabilities are recorded in 
   // NState x dpsize_ table, where values for GAP states are recorded in 
   // NCPGStates <= i < NState portion. 
-  bool noncpg_;
   uint dpsize_;
   uint pathsize_;
   std::vector<std::vector<ValueType> > vtb_; // DP table for Viterbi algorithm

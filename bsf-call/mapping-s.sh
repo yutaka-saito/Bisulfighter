@@ -14,13 +14,13 @@ lastal_opt=$7
 
 echo Host: `hostname`
 echo Arguments:
-echo "  Read directory:             $read_dir"
-echo "  Result directory:           $result_dir"
-echo "  Reference genome:           $refgenome"
-echo "  Options for last-map-probs: $map_probs_opt"
-echo "  Read name:                  $read_name"
-echo "  Read format:                $read_format"
-echo "  Options for lastal:         $lastal_opt"
+echo "  Read directory:                $read_dir"
+echo "  Result directory:              $result_dir"
+echo "  Reference genome:              $refgenome"
+echo "  Options for last-map-probs.py: $map_probs_opt"
+echo "  Read name:                     $read_name"
+echo "  Read format:                   $read_format"
+echo "  Options for lastal:            $lastal_opt"
 echo
 
 echo `date +"$date_format"` gzip read file start. 1>&2
@@ -40,19 +40,19 @@ echo `date +"$date_format"` zcat "$read_dir/$read_name"_1."$read_format".gz '|' 
 zcat "$read_dir/$read_name"_1."$read_format".gz | lastal -p bisulfite_r.mat -s0 $lastal_opt "$refgenome".r - > "$result_dir/$read_name"_1_r.maf
 echo `date +"$date_format"` 'lastal (reverse) done.' exit-status: $? 1>&2
 
-echo `date +"$date_format"` 'last-merge-batches start.' 1>&2
-echo `date +"$date_format"` last-merge-batches "$result_dir/$read_name"_1_f.maf "$result_dir/$read_name"_1_r.maf '>' "$result_dir/$read_name"_1.maf
-last-merge-batches "$result_dir/$read_name"_1_f.maf "$result_dir/$read_name"_1_r.maf > "$result_dir/$read_name"_1.maf
-echo `date +"$date_format"` 'last-merge-batches done.' exit-status: $? 1>&2
+echo `date +"$date_format"` 'last-merge-batches.py start.' 1>&2
+echo `date +"$date_format"` last-merge-batches.py "$result_dir/$read_name"_1_f.maf "$result_dir/$read_name"_1_r.maf '>' "$result_dir/$read_name"_1.maf
+last-merge-batches.py "$result_dir/$read_name"_1_f.maf "$result_dir/$read_name"_1_r.maf > "$result_dir/$read_name"_1.maf
+echo `date +"$date_format"` 'last-merge-batches.py done.' exit-status: $? 1>&2
 
 echo `date +"$date_format"` delete temporary files start. 1>&2
 rm "$result_dir/$read_name"_1_f.maf "$result_dir/$read_name"_1_r.maf
 echo `date +"$date_format"` delete temporary files done. exit-status: $? 1>&2
 
-echo `date +"$date_format"` 'last-map-probs start.' 1>&2
-echo `date +"$date_format"` last-map-probs $map_probs_opt "$result_dir/$read_name"_1.maf '>' "$result_dir/$read_name".maf
-last-map-probs $map_probs_opt "$result_dir/$read_name"_1.maf > "$result_dir/$read_name".maf
-echo `date +"$date_format"` 'last-map-probs done.' exit-status: $? 1>&2
+echo `date +"$date_format"` 'last-map-probs.py start.' 1>&2
+echo `date +"$date_format"` last-map-probs.py $map_probs_opt "$result_dir/$read_name"_1.maf '>' "$result_dir/$read_name".maf
+last-map-probs.py $map_probs_opt "$result_dir/$read_name"_1.maf > "$result_dir/$read_name".maf
+echo `date +"$date_format"` 'last-map-probs.py done.' exit-status: $? 1>&2
 
 echo `date +"$date_format"` delete temporary files start. 1>&2
 rm "$result_dir/$read_name"_1.maf
