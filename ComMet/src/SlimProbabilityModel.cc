@@ -1,21 +1,18 @@
-// ComMet
-// by National Institute of Advanced Industrial Science and Technology (AIST)
-// is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
-// http://creativecommons.org/licenses/by-nc-sa/3.0/
-
-
 #include <iostream>
 #include <cassert>
 
-#include "SlimProbabilityModel.h"
+#include "SlimProbabilityModel.hh"
 
 using namespace std;
 
 bool SlimProbabilityModel::
-reset(const MethylList& met, ValueType alpha)
+reset(const MethylList& met, const GlobalStatistics& gstat, bool noncpg)
 {
+  // noncpg_
+  noncpg_ = noncpg;
+
   // dpsize_, pathsize_
-  dpsize_ = met.pos_.size();
+  dpsize_ = met.pos_size();
   pathsize_ = met.pos_.back() - met.pos_[0] + 1;
   cout << "DP size: " << dpsize_ << endl;
   cout << "path size: " << pathsize_ << endl;
@@ -29,8 +26,9 @@ reset(const MethylList& met, ValueType alpha)
   Dist.resize(dpsize_-1);
   for (uint i=0; i!=dpsize_-1; ++i) {
     Dist[i] = met.pos_[i+1] - met.pos_[i];
-    if (Dist[i] < 2) {
-      cout << "error: distance between neighbor CpGs must not be less than 2 " << met.name_ << endl;
+    if (Dist[i] < 2 && (! noncpg_)) {
+      cout << "error: distance between neighbor CpGs must not be less than 2," << endl
+	   << met.name_ << "\t" << met.pos_[i] << "\t" << met.pos_[i+1] << endl;
       return false;
     }
   }
@@ -69,7 +67,7 @@ reset(const MethylList& met, ValueType alpha)
   flg_bwd_ = false;
 
   // InitProb, TransProb, EmitProb, TransProbDist,
-  reset_param(met, alpha);
+  reset_param(met, gstat);
 
   return true;
 }
@@ -136,15 +134,26 @@ viterbi()
       ValueType max = NEG_INF;
       uint idx = NCPGState;
       uint jdx = NGAPState;
-      for (uint k=0; k!=NCPGState; ++k) {
-	for (uint l=NCPGState; l!=NState; ++l) {
-	  ValueType v = vtb_[k][i-1] + TransProb[k][l] 
-	    + TransProbDist[l-NCPGState][i-1] + TransProb[l][j] + EmitProb[j][i]; 
+      if (Dist[i-1] == 1) {
+	for (uint k=0; k!=NCPGState; ++k) {
+	  ValueType v = vtb_[k][i-1] + TransProb[k][j] + EmitProb[j][i]; 
+	  if (v > max) {
+	    max = v;
+	    idx = k;
+	  }	  
+	}
+      }
+      else {
+	for (uint k=0; k!=NCPGState; ++k) {
+	  for (uint l=NCPGState; l!=NState; ++l) {
+	    ValueType v = vtb_[k][i-1] + TransProb[k][l] 
+	      + TransProbDist[l-NCPGState][i-1] + TransProb[l][j] + EmitProb[j][i]; 
 	    if (v > max) {
 	      max = v;
 	      idx = k;
 	      jdx = l;
 	    }	  
+	  }
 	}
       }
       vtb_[j][i] = max;
@@ -170,16 +179,28 @@ pdecode(ValueType gcpg, ValueType ggap)
       ValueType max = NEG_INF;
       uint idx = NCPGState;
       uint jdx = NGAPState;
-      for (uint k=0; k!=NCPGState; ++k) {
-	for (uint l=NCPGState; l!=NState; ++l) {
-	  if (! (TransProb[k][l] > NEG_INF && TransProb[l][j] > NEG_INF)) continue;
-	  ValueType v = pdc_[k][i-1] 
-	    + (ggap + 1.0) * ppr_[l][i-1] - (Dist[i-1] - 1.0)
-            + (gcpg + 1.0) * ppr_[k][i] - 1.0;
+      if (Dist[i-1] == 1) {
+	for (uint k=0; k!=NCPGState; ++k) {
+	  if (! (TransProb[k][j] > NEG_INF)) continue;
+	  ValueType v = pdc_[k][i-1] + (gcpg + 1.0) * ppr_[k][i] - 1.0;; 
 	  if (v > max) {
 	    max = v;
 	    idx = k;
-	    jdx = l;
+	  }
+	}
+      }
+      else {
+	for (uint k=0; k!=NCPGState; ++k) {
+	  for (uint l=NCPGState; l!=NState; ++l) {
+	    if (! (TransProb[k][l] > NEG_INF && TransProb[l][j] > NEG_INF)) continue;
+	    ValueType v = pdc_[k][i-1] 
+	      + (ggap + 1.0) * ppr_[l][i-1] - (Dist[i-1] - 1.0)
+	      + (gcpg + 1.0) * ppr_[k][i] - 1.0;
+	    if (v > max) {
+	      max = v;
+	      idx = k;
+	      jdx = l;
+	    }
 	  }
 	}
       }
@@ -291,11 +312,19 @@ fwdbwd()
   for (uint i=1; i!=dpsize_; ++i) {
     for (uint j=0; j!=NCPGState; ++j) {
       ValueType val = NEG_INF;
-      for (uint k=0; k!=NCPGState; ++k) {
-	for (uint l=NCPGState; l!=NState; ++l) {
-	  ValueType v = fwd_[k][i-1] + TransProb[k][l] 
-	    + TransProbDist[l-NCPGState][i-1] + TransProb[l][j] + EmitProb[j][i]; 
+      if (Dist[i-1] == 1) {
+	for (uint k=0; k!=NCPGState; ++k) {
+	  ValueType v = fwd_[k][i-1] + TransProb[k][j] + EmitProb[j][i];
 	  if (v > NEG_INF) Fast_LogPlusEquals(val, v);
+	}
+      }
+      else {
+	for (uint k=0; k!=NCPGState; ++k) {
+	  for (uint l=NCPGState; l!=NState; ++l) {
+	    ValueType v = fwd_[k][i-1] + TransProb[k][l] 
+	      + TransProbDist[l-NCPGState][i-1] + TransProb[l][j] + EmitProb[j][i]; 
+	    if (v > NEG_INF) Fast_LogPlusEquals(val, v);
+	  }
 	}
       }
       fwd_[j][i] = val;
@@ -321,11 +350,19 @@ fwdbwd()
   for (uint i=1; i!=dpsize_; ++i) {
     for (uint j=0; j!=NCPGState; ++j) {
       ValueType val = NEG_INF;      
-      for (uint k=0; k!=NCPGState; ++k) {
-	for (uint l=NCPGState; l!=NState; ++l) {
-	  ValueType v = TransProb[j][l] + TransProbDist[l-NCPGState][dpsize_-i-1] 
-	    + TransProb[l][k] + bwd_[k][dpsize_-i] + EmitProb[k][dpsize_-i];
+      if (Dist[dpsize_-i-1] == 1) {
+	for (uint k=0; k!=NCPGState; ++k) {
+	  ValueType v = TransProb[j][k] + bwd_[k][dpsize_-i] + EmitProb[k][dpsize_-i];
 	  if (v > NEG_INF) Fast_LogPlusEquals(val, v);
+	}
+      }
+      else {
+	for (uint k=0; k!=NCPGState; ++k) {
+	  for (uint l=NCPGState; l!=NState; ++l) {
+	    ValueType v = TransProb[j][l] + TransProbDist[l-NCPGState][dpsize_-i-1] 
+	      + TransProb[l][k] + bwd_[k][dpsize_-i] + EmitProb[k][dpsize_-i];
+	    if (v > NEG_INF) Fast_LogPlusEquals(val, v);
+	  }
 	}
       }
       bwd_[j][dpsize_-i-1] = val;
@@ -361,7 +398,7 @@ fwdbwd()
 void SlimProbabilityModel::
 em(uint nitr, bool verbose) 
 {
-  const ValueType torelance = 1e-4;
+  const ValueType tolerance = 1e-4;
 
   if (verbose) {
     print_param(true);
@@ -391,7 +428,12 @@ em(uint nitr, bool verbose)
 	}
 	ValueType val = NEG_INF;
 	if (j < NCPGState && k < NCPGState) { // CpG to CpG
-	  continue;
+	  for (uint i=0; i!=dpsize_-1; ++i) {
+	    if (Dist[i] == 1) {
+	      ValueType v = fwd_[j][i] + TransProb[j][k] + bwd_[k][i+1] + EmitProb[k][i+1] - total_;
+	      if (v > NEG_INF) Fast_LogPlusEquals(val, v);
+	    }
+	  }
 	}
 	else if (j < NCPGState && k >= NCPGState) { // CpG to GAP
 	  for (uint i=0; i!=dpsize_-1; ++i) {
@@ -445,11 +487,11 @@ em(uint nitr, bool verbose)
     for (uint j=0; j!=NCPGState; ++j) {
       if (ex_init[j] > 0.0) {
 	ValueType val = ex_init[j] / sum;
-	if (fabs(Exp(InitProb[j]) - val) > torelance) conv = false;
+	if (fabs(Exp(InitProb[j]) - val) > tolerance) conv = false;
 	InitProb[j] = Log(val);
       }
       else {
-	if (Exp(InitProb[j]) > torelance) conv = false;
+	if (Exp(InitProb[j]) > tolerance) conv = false;
 	InitProb[j] = NEG_INF;
       }
     }
@@ -461,21 +503,24 @@ em(uint nitr, bool verbose)
       for (uint k=0; k!=NState; ++k) {
 	if (ex_trans[j][k] > 0.0) {
 	  ValueType val = ex_trans[j][k] / sum;
-	  if (fabs(Exp(TransProb[j][k]) - val) > torelance) conv = false;
+	  if (fabs(Exp(TransProb[j][k]) - val) > tolerance) conv = false;
 	  TransProb[j][k] = Log(val);
 	}
 	else {
-	  if (Exp(TransProb[j][k]) > torelance) conv = false;
+	  if (Exp(TransProb[j][k]) > tolerance) conv = false;
 	  TransProb[j][k] = NEG_INF;
 	}
       }
     }
     if (verbose) print_param(true);
 
-    for (uint i=0; i!=dpsize_-1; ++i) 
-      for (uint j=NCPGState; j!=NState; ++j) 
-	TransProbDist[j-NCPGState][i] = (Dist[i] - 2) * TransProb[j][j];
-    
+    for (uint i=0; i!=dpsize_-1; ++i) {
+      for (uint j=NCPGState; j!=NState; ++j) {
+	if (Dist[i] == 1) TransProbDist[j-NCPGState][i] = NEG_INF;
+	else TransProbDist[j-NCPGState][i] = (Dist[i] - 2) * TransProb[j][j];
+      }
+    }
+
     if (conv) {
       progress("convergence");
       break;

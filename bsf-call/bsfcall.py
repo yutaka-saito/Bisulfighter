@@ -219,8 +219,8 @@ class BsfCallBase(object):
 
     def filterOpts(self, mismapProb, scoreThres, isPairedEnd):
         """
-        get filtering option. this option is specified to last-map-probs.py or
-        last-pair-probs.py.
+        get filtering option. this option is specified to last-map-probs or
+        last-pair-probs.
         """
 
         option = ""
@@ -1145,7 +1145,7 @@ class LastExecutor(BsfCallBase):
         get command to merge lastal output.
         """
 
-        cmd = "last-merge-batches.py %s %s %s > %s" % (opts, forwardFile, reverseFile, outputFile)
+        cmd = "last-merge-batches %s %s %s > %s" % (opts, forwardFile, reverseFile, outputFile)
         if rmInFiles:
             cmd += "; rm %s %s" % (forwardFile, reverseFile)
 
@@ -1370,7 +1370,7 @@ class LastExecutorSingle(LastExecutor):
         get filter command.
         """
 
-        cmd = "last-map-probs.py %s %s > %s" % (opts, inputFile, outputFile)
+        cmd = "last-map-probs %s %s > %s" % (opts, inputFile, outputFile)
         if rmInFile:
             cmd += "; rm %s" % inputFile
 
@@ -1418,7 +1418,7 @@ class LastExecutorPairedEnd(LastExecutor):
         get filter command.
         """
 
-        cmd = "last-pair-probs.py %s %s > %s" % (opts, inputFile, outputFile)
+        cmd = "last-pair-probs %s %s > %s" % (opts, inputFile, outputFile)
         if rmInFile:
             cmd += "; rm %s" % inputFile
 
@@ -1470,6 +1470,8 @@ class McDetector(BsfCallBase):
 
         for line in open(self.refGenome, "r"):
             line = line.strip()
+            if len(line) == 0:
+                continue;
             if line[0] == ">":
                 if self.targetChr != "":
                     self.processOneChr()

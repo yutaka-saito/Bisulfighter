@@ -1,13 +1,21 @@
-== ComMet: an HMM-based approach to detection of differentially methylated regions
+== ComMet: an HMM-based approach to detection of differentially methylated regions (DMRs)
+
+version 1.1
 
 
-==== Required libraries 
+==== Precompiled Binaries
 
-Boost C++ libraries 
+ComMet.v11.linux.64
+(Linux 3.2.0-4-amd64 + GCC 4.7.2 + Boost 1.49.0)
+
+ComMet.v11.linux.32
+(Linux 2.6.32-5-686 + GCC 4.4.5 + Boost 1.42.0)
+
+
+==== Build yourself
+
+Boost C++ libraries 1.35.0 or later are required.
 http://www.boost.org/
-
-
-==== Build
 
 $ tar xzvf ComMet-xxx.tar.gz
 $ cd ComMet-xxx
@@ -26,12 +34,6 @@ $ ComMet example/example.in example/example.out1 example/example.out2
 
 For more output DMRs,
 $ ComMet --threshold -5 example/example.in example/example.out1 example/example.out2
-
-For more accurate DMRs, 
-$ ComMet --dual example/example.in example/example.out1 example/example.out2
-
-Combining them, 
-$ ComMet --dual --threshold -5 example/example.in example/example.out1 example/example.out2
 
 
 ==== Input format
@@ -61,7 +63,7 @@ for plus and minus strands, and apply them to ComMet separately.
 
 ==== Output format
 
-output1 contains information of differential methylation at individual cytosines.
+output1 contains information of differential methylation at individual cytosine sites.
 See example/example.out1_
 
 Col.| Description
@@ -84,6 +86,30 @@ Col.| Description
 3   | 0-based genomic stop position
 4   | direction of differential methylation (UP/DOWN) comparing sample1 to sample2
 5   | log-likelihood ratio score 
+6   | log-likelihood ratio score divided by DMR length
+
+Make sure output1 and output2 are used properly considering the purpose of your study. 
+You should use output1 if you are interested only in differential methylation at 
+individual cytosine sites (Note that it is the purpose of most existing packages for 
+bisulfite sequencing data analysis developed by other groups).
+ComMet is mainly designed for DMR detection, i.e. determining precise boundaries of 
+regional differential methylation, even if DMRs include some cytosine sites whose 
+observed methylation changes are relatively weak due to limited sequencing depth. 
+Such an analysis is useful for identifying biologically important DMRs such as 
+cis regulatory elements; output2 is suitable for this purpose. 
+
+
+==== Tips for detection of DMRs in non-CpG context
+
+ComMet version 1.1 supports detection of DMRs in non-CPG context (CHG and CHH). 
+
+$ ComMet --noncpg example/example.chg.in example/example.chg.out1 example/example.chg.out2
+$ ComMet --noncpg example/example.chh.in example/example.chh.out1 example/example.chh.out2
+$ ComMet example/example.cpg.in example/example.cpg.out1 example/example.cpg.out2
+
+Make sure an input file is prepared separately for each context, and ComMet is executed 
+with proper options. We do not recommend that input files for different contexts are 
+combined, or ComMet is executed --noncpg option while an input file contains only CpGs.
 
 
 ==== FAQ
@@ -98,10 +124,6 @@ i.e. the 5'-CpG-3' in the plus strand, and the neighboring 3'-GpC-5' in the minu
 See the "Input format" section above for this issue. 
 Second, the input file may contain cytosines in non-CpG context; just remove them. 
 
-Q. Does ComMet support DMRs in non-CpG context (CHG or CHH)?
-A. 
-No. But we are planning to address this issue in the next version of ComMet.
-
 Q. The read counts in the example input file are decimals rather than integers. Why?
 A. 
 Either decimals or integers can be used for read counts in input files. 
@@ -109,15 +131,25 @@ The reason that the example input file contains decimals is that some alignment 
 probability-weighted read counts. Of course, you can use your favorite aligners for preparing 
 input files that may contain integers only.
 
+Q. Can ComMet compute statistical significance (p-values) rather than likelihood ratio scores?
+A.
+No. But we are planning to address this issue in the next version of ComMet. 
+
 
 ==== History
 
-* version 1.0
+* version 1.1
+- implemented the algorithm described in [Saito et al., submitted, 2014]
+- implemented a testing version of algorithms for DMRs in non-CpG context 
+- added some tips in README about detection of DMRs in non-CPG context
 - tuned the default parameters
+
+* version 1.0
 - added the FAQ in README
+- tuned the default parameters
 
 * version 0.1 
-- implemented the algorithms described in [Saito et al., Nucleic Acids Res, 2013]
+- implemented the algorithms described in [Saito et al., Nucleic Acids Res, 2014]
 
 
 ==== Bisulfighter
@@ -138,7 +170,12 @@ http://creativecommons.org/licenses/by-nc-sa/3.0/
 
 Yutaka Saito, Junko Tsuji, and Toutai Mituyama,
 Bisulfighter: accurate detection of methylated cytosines and differentially methylated regions,
-Nucleic Acids Research, accepted for publication, 2013.
+Nucleic Acids Research, 42(6):e45, 2014. 
+
+Yutaka Saito, and Toutai Mituyama, 
+Detection of differentially methylated regions from bisulfite sequencing data 
+improved by hidden Markov models with new emission probabilities. 
+submitted. 
 
 
 ==== Contact
