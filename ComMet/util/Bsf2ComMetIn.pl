@@ -7,17 +7,16 @@
 
 use strict;
 use warnings;
-use Getopt::Long qw(:config posix_default no_ignore_case gnu_compat);
 
-# convert bsf-call output to ComMet input
+# format Bisulfighter's input to ComMet's input
 # (data from both strands are integrated)
 #
 # usage:
-# ./this_program --cpg --sample1 BsfOutput1.tsv --sample2 BsfOutput2.tsv > ComMetInput
+# ./this_program sample1.tsv sample2.tsv > ComMetInput
 
 # input format 
 =pod
-# BsfOutput1.tsv
+# sample1
 chr1  123      +  CG   0.8    10
 chr1  128      +  CHG  0.7    8
 chr1  1000000  +  CG   0.234  9
@@ -27,7 +26,7 @@ chr2  1057     +  CG   0.826  50
 =cut
 
 =pod
-# BsfOutput2.tsv
+# sample2
 chr1  123      +  CG   0.3    30
 chr1  128      +  CHG  0.24   20
 chr1  1000000  +  CG   0.36   8
@@ -44,36 +43,12 @@ chr2  987      12*(0.654)  12*(1-0.654)  12*(0.64)  12*(1-0.64)
 chr2  1057     50*(0.826)  50*(1-0.826)  32*(0.0)   32*(1-0.0)
 =cut
 
-my $context = "";
-my ($cpg, $chg, $chh) = (0 ,0, 0);
-my ($sample1, $sample2) = ("", "");
-my ($tmpout1, $tmpout2) = ("tmp.$$.1", "tmp.$$.2");
+my $command = "";
+my $tmpout1 = "tmp.$$.1";
+my $tmpout2 = "tmp.$$.2";
 
-GetOptions(
-    "--cpg" => \$cpg,
-    "--chg" => \$chg,
-    "--chh" => \$chh,
-    "--sample1=s" => \$sample1,
-    "--sample2=s" => \$sample2,
-);
-
-if ($cpg) {
-    $context = "CG";
-} 
-elsif ($chg) {
-    $context = "CHG";
-}
-elsif ($chh) {
-    $context = "CHH";
-}
-else {
-    die "specify the context with --cpg, --chg, or --chh\n";
-}
-$sample1 eq "" and die "specify the file name with --sample1\n";
-$sample2 eq "" and die "specify the file name with --sample2\n";
-
-&bsf_unstrand($sample1, $tmpout1, $context);
-&bsf_unstrand($sample2, $tmpout2, $context);
+&uniq_add($ARGV[0], $tmpout1);
+&uniq_add($ARGV[1], $tmpout2);
 
 my ($nm1, $pos1, $m1, $u1) = ("", -1, -1, -1);
 my ($nm2, $pos2, $m2, $u2) = ("", -1, -1, -1);
@@ -150,47 +125,72 @@ sub chreq {
     }
 }
 
-sub bsf_unstrand {
-    my ($infile, $outfile, $context) = @_;
+sub uniq_add {
+    my ($infile, $outfile) = @_;
+    my ($nm, $str, $pos, $m, $u) = ("", "", -1, -1, -1);
+    my ($pre_nm, $pre_str, $pre_pos, $pre_m, $pre_u) = ("", "", -1, -1, -1);
+    my $mind = 2; # minimum distance between two CpGs
     my $thsh = 0;
-    my $Table = [];
-    my @Print;
 
     open(IN, $infile) or die "couldn't open input file $infile\n";
+    open(OUT, "> $outfile") or die "couldn't open output file $outfile\n";
     while (my $line=<IN>) {
 	chomp $line;
-	my ($nm, $pos, $str, $cxt, $r, $d) = split(/\s+/, $line);;
-	my ($m, $u) = ($r * $d, (1.0-$r) * $d);
-	push(@$Table, [$nm, $pos, $str, $cxt, $m, $u]);
-	push(@Print, 1);
-    }
-    close(IN);
-
-    my $offset = 1;
-    for (my $i=$offset; $i<@$Table; $i++) {
-	my ($nm, $pos, $str, $cxt, $m, $u) = @{$Table->[$i]};
-	($str eq "-" && $cxt eq "CG") or next;
-	my ($nm_pre, $pos_pre, $str_pre, $cxt_pre, $m_pre, $u_pre) = @{$Table->[$i-$offset]};
-	if ($nm_pre eq $nm && $pos_pre == $pos-$offset) {
-	    $str_pre eq "+" or die "inconsistent strand $str $str_pre\n";
-	    $cxt_pre eq $cxt or die "inconsistent context $cxt $cxt_pre\n";
-	    $Print[$i]==1 or die "line already aggregated\n";
-	    $Table->[$i-$offset] = [$nm_pre, $pos_pre, $str_pre, $cxt_pre, $m+$m_pre, $u+$u_pre];
-	    $Print[$i] = 0;
+	$line =~ /^\#/ and next;
+	$line =~ /CG/ or next;
+	my @cells = split(/\s+/, $line);
+	$nm = $cells[0];
+	$str = $cells[2];
+	$pos = $cells[1];
+	$m = $cells[5] * $cells[4];
+	$u = $cells[5] * (1.0-$cells[4]);
+	
+	if ($str eq "+") {
+	}
+	elsif ($str eq "-") {
+	    $str = "+";
+	    $pos -= $mind - 1; 
 	}
 	else {
-	    $Table->[$i] = [$nm, $pos-$offset, $str, $cxt, $m, $u];	    
+	    print STDERR "warning: abnormal strand $str was removed\n";
+	    next;
+	}
+
+
+	if ($nm eq $pre_nm && $str eq $pre_str && $pos==$pre_pos) {
+	    $pre_m += $m;
+	    $pre_u += $u;
+	}
+	else {
+	    if ($nm eq $pre_nm && $pos-$pre_pos < $mind) {
+		print STDERR "warning: abnormal position difference $pre_pos $pos, ";
+		if ($m + $u > $pre_m + $pre_u) {
+		    print STDERR "$pre_pos was removed.\n";
+		    $pre_nm = $nm;
+		    $pre_str = $str;
+		    $pre_pos = $pos;
+		    $pre_m = $m;
+		    $pre_u = $u;
+		}
+		else {
+		    print STDERR "$pos was removed.\n"
+		    }
+		next;
+	    }
+	    if ($pre_m + $pre_u > $thsh) {
+		print OUT join("\t", ($pre_nm, $pre_pos, $pre_m, $pre_u)), "\n";
+	    }
+	    $pre_nm = $nm;
+	    $pre_str = $str;
+	    $pre_pos = $pos;
+	    $pre_m = $m;
+	    $pre_u = $u;
 	}
     }
-
-    open(OUT, "> $outfile") or die "couldn't open output file $outfile\n";
-    for (my $i=0; $i<@$Table; $i++) {
-	$Print[$i]==1 or next;
-	my ($nm, $pos, $str, $cxt, $m, $u) = @{$Table->[$i]};
-	$cxt eq $context or next;
-	$m+$u > $thsh or next;
-	print OUT join("\t", ($nm, $pos, $m, $u)), "\n";
+    if ($pre_m + $pre_u > $thsh) {
+	print OUT join("\t", ($pre_nm, $pre_pos, $pre_m, $pre_u)), "\n";
     }
+    close(IN);
     close(OUT);
 }
 
