@@ -156,7 +156,7 @@ echo "done"; echo ""
 
 echo "(4) Prepare input files for DMR detection."
 invoke_command "mkdir $TMPDMR"
-invoke_command "$BSF2COM_CMD $RESMC1 $RESMC2 > $COMIN"
+invoke_command "$BSF2COM_CMD --cpg --sample1 $RESMC1 --sample2 $RESMC2 > $COMIN"
 echo "done"; echo ""
 
 echo "(5) Perform DMR detection between sample1 and sample2."

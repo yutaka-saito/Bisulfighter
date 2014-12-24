@@ -7,14 +7,15 @@
 
 use strict;
 use warnings;
+use Getopt::Long qw(:config posix_default no_ignore_case gnu_compat);
 
-# format Bisulfighter's input to ComMet's input
-# (data from the reverse strand are used)
+# convert bsf-call output to ComMet input
+# (data from the reverse strand are integrated)
 #
 # usage:
-# ./this_program sample1.tsv sample2.tsv > ComMetInput
+# ./this_program --cpg --sample1 BsfOutput1.tsv --sample2 BsfOutput2.tsv > ComMetInput
 
-# input format 
+# input format
 =pod
 # sample1
 chr1  123      +  CG   0.8    10
@@ -35,19 +36,43 @@ chr2  1000     +  CHG  0.820  9
 chr2  1057     +  CG   0.0    32
 =cut
 
-# output format 
+# output format
 =pod
 chr1  1000000  9*(0.234)   9*(1-0.234)   8*(0.36)   8*(1-0.36)
 chr2  987      12*(0.654)  12*(1-0.654)  12*(0.64)  12*(1-0.64)
 =cut
 
 
-my $command = "";
-my $tmpout1 = "tmp.$$.1";
-my $tmpout2 = "tmp.$$.2";
+my $context = "";
+my ($cpg, $chg, $chh) = (0 ,0, 0);
+my ($sample1, $sample2) = ("", "");
+my ($tmpout1, $tmpout2) = ("tmp.$$.1", "tmp.$$.2");
 
-&uniq_add($ARGV[0], $tmpout1);
-&uniq_add($ARGV[1], $tmpout2);
+GetOptions(
+    "--cpg" => \$cpg,
+    "--chg" => \$chg,
+    "--chh" => \$chh,
+    "--sample1=s" => \$sample1,
+    "--sample2=s" => \$sample2,
+);
+
+if ($cpg) {
+    $context = "CG";
+} 
+elsif ($chg) {
+    $context = "CHG";
+}
+elsif ($chh) {
+    $context = "CHH";
+}
+else {
+    die "specify the context with --cpg, --chg, or --chh\n";
+}
+$sample1 eq "" and die "specify the file name with --sample1\n";
+$sample2 eq "" and die "specify the file name with --sample2\n";
+
+&bsf_unstrand($sample1, $tmpout1, $context);
+&bsf_unstrand($sample2, $tmpout2, $context);
 
 my ($nm1, $pos1, $m1, $u1) = ("", -1, -1, -1);
 my ($nm2, $pos2, $m2, $u2) = ("", -1, -1, -1);
@@ -124,70 +149,31 @@ sub chreq {
     }
 }
 
-sub uniq_add {
-    my ($infile, $outfile) = @_;
-    my ($nm, $str, $pos, $m, $u) = ("", "", -1, -1, -1);
-    my ($pre_nm, $pre_str, $pre_pos, $pre_m, $pre_u) = ("", "", -1, -1, -1);
-    my $mind = 2; # minimum distance between two CpGs
+sub bsf_unstrand {
+    my ($infile, $outfile, $context) = @_;
     my $thsh = 0;
+    my $Table = [];
+    my @Print;
 
     open(IN, $infile) or die "couldn't open input file $infile\n";
-    open(OUT, "> $outfile") or die "couldn't open output file $outfile\n";
     while (my $line=<IN>) {
 	chomp $line;
-	$line =~ /^\#/ and next;
-	$line =~ /CG/ or next;
-	my @cells = split(/\s+/, $line);
-	$nm = $cells[0];
-	$str = $cells[2];
-	$pos = $cells[1];
-	$m = $cells[5] * $cells[4];
-	$u = $cells[5] * (1.0-$cells[4]);
-	
-	if ($str eq "+") {
-	    next;
-	}
-	elsif ($str eq "-") {
-	}
-	else {
-	    print STDERR "warning: abnormal strand $str was removed\n";
-	    next;
-	}
-
-
-	if ($nm eq $pre_nm && $str eq $pre_str && $pos==$pre_pos) {
-	    $pre_m += $m;
-	    $pre_u += $u;
-	}
-	else {
-	    if ($nm eq $pre_nm && $pos-$pre_pos < $mind) {
-		print STDERR "warning: abnormal position difference $pre_pos $pos, ";
-		if ($m + $u > $pre_m + $pre_u) {
-		    print STDERR "$pre_pos was removed.\n";
-		    $pre_nm = $nm;
-		    $pre_str = $str;
-		    $pre_pos = $pos;
-		    $pre_m = $m;
-		    $pre_u = $u;
-		}
-		else {
-		    print STDERR "$pos was removed.\n"
-		    }
-		next;
-	    }
-	    if ($pre_m + $pre_u > $thsh) {
-		print OUT join("\t", ($pre_nm, $pre_pos, $pre_m, $pre_u)), "\n";
-	    }
-	    $pre_nm = $nm;
-	    $pre_str = $str;
-	    $pre_pos = $pos;
-	    $pre_m = $m;
-	    $pre_u = $u;
-	}
-    }
-    if ($pre_m + $pre_u > $thsh) {
-	print OUT join("\t", ($pre_nm, $pre_pos, $pre_m, $pre_u)), "\n";
+	my ($nm, $pos, $str, $cxt, $r, $d) = split(/\s+/, $line);;
+	my ($m, $u) = ($r * $d, (1.0-$r) * $d);
+	push(@$Table, [$nm, $pos, $str, $cxt, $m, $u]);
+	push(@Print, 1);
     }
     close(IN);
+
+    open(OUT, "> $outfile") or die "couldn't open output file $outfile\n";
+    for (my $i=0; $i<@$Table; $i++) {
+	$Print[$i]==1 or next;
+	my ($nm, $pos, $str, $cxt, $m, $u) = @{$Table->[$i]};
+	$str eq "-" or next;
+	$cxt eq $context or next;
+	$m+$u > $thsh or next;
+	print OUT join("\t", ($nm, $pos, $m, $u)), "\n";
+    }
     close(OUT);
 }
+
