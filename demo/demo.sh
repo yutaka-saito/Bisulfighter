@@ -17,19 +17,13 @@ invoke_command () {
 remove_if () {
   for i in $1 ; do
     if [ -d $i -o -f $i ] ; then
-      invoke_command "\rm -rf $i"
+      invoke_command "rm -rf $i"
     fi
   done
 }
 
-#
-# The following lines work unexpectedly in sun grid engine environment.
-# Please be sure to run this script in demo/ directory as your currently working directory
-#
-# TOPDIR=`dirname $0`
-# cd $TOPDIR
 
-typeset -i PYTHON_VERSION=`/usr/bin/env python -c 'import sys; print "%d" % sys.hexversion'`
+PYTHON_VERSION=`/usr/bin/env python -c 'import sys; print "%d" % sys.hexversion'`
 if [ $PYTHON_VERSION -lt 34013184 ];
 then
   echo "Error: bsf-call requires Python-2.7 or later."
@@ -52,33 +46,9 @@ then
 else
   ln -fs $BSFCALL_PY .
 fi;
-MAPPING_P_SH=../bsf-call/mapping-p.sh
-if [ ! -f $MAPPING_P_SH ];
-then
-  echo "Error: $MAPPING_P_SH is not found."
-  exit 1;
-else
-  ln -fs $MAPPING_P_SH .
-fi;
-MAPPING_S_SH=../bsf-call/mapping-s.sh
-if [ ! -f $MAPPING_S_SH ];
-then
-  echo "Error: $MAPPING_S_SH is not found."
-  exit 1;
-else
-  ln -fs $MAPPING_S_SH .
-fi;
-MC_DETECTOR_PY=../bsf-call/mc-detector.py
-if [ ! -f $MC_DETECTOR_PY ];
-then
-  echo "Error: $MC_DETECTOR_PY is not found."
-  exit 1;
-else
-  ln -fs $MC_DETECTOR_PY .
-fi;
 
 
-BSFCALL_CMD="${BSFCALL_SCRIPT} -c 0 --last=-d108,-e120"
+BSFCALL_CMD="${BSFCALL_SCRIPT}"
 BSFCALL_README=../bsf-call/bsf-call.txt
 COMMET_DIR=../ComMet
 COMMET_EXEC=${COMMET_DIR}/src/ComMet
@@ -126,6 +96,7 @@ RESMC2=$RESULT/res.mc2
 RESDMR=$RESULT/res.dmr
 RESDMC=$RESULT/res.dmc
 
+cd `dirname $0`
 
 echo "This is a demo script for bisulfighter."
 echo ""

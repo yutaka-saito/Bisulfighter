@@ -8,7 +8,7 @@ is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Un
 http://creativecommons.org/licenses/by-nc-sa/3.0/
 """
 
-__version__= "0.9"
+__version__= "1.2"
 
 import sys
 import os
@@ -20,9 +20,13 @@ from datetime import datetime
 import hashlib
 from string import maketrans
 import gzip
+import bz2
+import zipfile
 import logging
 from time import sleep
 from shutil import copy
+import re
+# import pysam
 
 class BsfCallBase(object):
     """
@@ -36,25 +40,22 @@ class BsfCallBase(object):
         file name (without file extension) and file extension.
         if extension of filePath is '.gz', '.gz' extension is ignored.
         """
-
-        if self.isGzippedFile(filePath):
-            dir_name, file_name = os.path.split(filePath[0:-3])
-        else:
-            dir_name, file_name = os.path.split(filePath)
+        dir_name, file_name = os.path.split(filePath)
         base_name, ext = os.path.splitext(file_name)
+        prog = None
+        if (ext == '.gz' or ext == '.gzip' or ext == '.bz2' or ext == '.bzip2' or ext == '.zip'):
+           prog = ext[1:]
+           base_name, ext = os.path.splitext(base_name)
         if len(ext) > 1:
             ext = ext[1:]
-
-        return (dir_name, file_name, base_name, ext)
+        return (dir_name, file_name, base_name, ext, prog)
 
 
     def readNameByReadFile(self, readFilePath):
         """
         get read name by read file path.
         """
-
-        dir_name, file_name, read_name, ext = self.splitFilePath(readFilePath)
-
+        dir_name, file_name, read_name, ext, prog = self.splitFilePath(readFilePath)
         return read_name
 
 
@@ -66,22 +67,14 @@ class BsfCallBase(object):
         if secondReadType is specified, the extension of second read file is its
         value.
         """
-
         fpath = ""
-
-        if self.isGzippedFile(readFile):
-            dir_name, file_name = os.path.split(readFile[0:-3])
-            basename, ext = os.path.splitext(file_name)
-            if secondReadType:
-                ext = ".%s" % secondReadType
-            fpath = "%s/%s2%s.gz" % (dir_name, basename[0:-1], ext)
+        dir_name, file_name, basename, ext, prog = self.splitFilePath(readFile)
+        if secondReadType:
+            ext = ".%s" % secondReadType
+        if prog is not None:
+            fpath = "%s/%s2%s.%s" % (dir_name, basename[0:-1], ext, prog)
         else:
-            dir_name, file_name = os.path.split(readFile)
-            basename, ext = os.path.splitext(file_name)
-            if secondReadType:
-                ext = ".%s" % secondReadType
             fpath = "%s/%s2%s" % (dir_name, basename[0:-1], ext)
-
         return fpath
 
 
@@ -101,22 +94,30 @@ class BsfCallBase(object):
         return seq.translate(maketrans("ATGCatgc", "TACGtacg"))[::-1]
 
 
-    def mcContextType(self, genomeSeq, cBasePos):
+    def mcContextType(self, genomeSeq, cBasePos, strand='+'):
         """
         get mC context type (CG, CHG, CHH) by genome sequence and C base position.
         if no mC context found, return None.
         """
 
         try:
-            if genomeSeq[cBasePos + 1] == "G":
-                return "CG"
-            else:
-                if genomeSeq[cBasePos + 2] == "G":
-                    return "CHG"
+            if strand == '+':
+                if genomeSeq[cBasePos + 1] == "G":
+                    return "CG"
                 else:
-                    return "CHH"
+                    if genomeSeq[cBasePos + 2] == "G":
+                        return "CHG"
+                    else:
+                        return "CHH"
+            elif strand == '-':
+                if genomeSeq[cBasePos - 1] == "C":
+                    return "CG"
+                else:
+                    if genomeSeq[cBasePos - 2] == "C":
+                        return "CHG"
+                    else:
+                        return "CHH"
             return None
-
         except IndexError:
             return None
 
@@ -133,27 +134,112 @@ class BsfCallBase(object):
         return ("CG", "CHG", "CHH")
 
 
-    def gzipFile(self, filePath, wait = True, log = False):
+    def bzip2File(self, filePath, wait = True, log = False):
         """
-        gzip file. If wait argument is False, without waiting for gzip process to be
+        bzip2 file. If wait argument is False, without waiting for bzip2 process to be
         completed, this function returns immediately.
         """
 
         if log:
-            logging.info("gzip start: %s" % filePath)
+            logging.info("bzip2 start: %s" % filePath)
 
         dirpath, fname = os.path.split(filePath)
-        cmd = "gzip %s" % fname
+        cmd = "bzip2 %s" % fname
         p = subprocess.Popen(cmd, shell = True, cwd = dirpath)
         if wait:
             p.wait()
 
         if log:
-            logging.info("gzip done: %s" % filePath)
+            logging.info("bzip2 done: %s" % filePath)
 
 
-    def isGzippedFile(self, filePath):
-        return filePath[-3:] == ".gz"
+    def isGzipFile(self, filePath):
+        return filePath[-3:] == ".gz" or filePath[-5:] == ".gzip"
+
+
+    def isBzip2File(self, filePath):
+        return filePath[-4:] == ".bz2" or filePath[-6:] == ".bzip2"
+
+
+    def isZipFile(self, filePath):
+        return filePath[-4:] == ".zip"
+
+
+    def isMafFile(self, filePath):
+        f = open(filePath, "rb")
+        data = f.read(1)
+        f.close()
+        if re.match("[\x20-\x7E]", data):
+            f = open(filePath, "r")
+            first_line = f.readline()
+            if first_line[0:5] != "track" and first_line[0] != "#" and first_line[0:2] != "a ":
+                f.close()
+                return False
+
+            if first_line[0:2] == "a ":
+                cnt = 2
+            else:
+                cnt = 1
+
+            while True:
+                line = f.readline()
+                if line == "":
+                    break
+                if line[0] == "#" or line.strip() == "":
+                    continue
+
+                if cnt == 1 and line[0:2] != "a ":
+                    f.close()
+                    return False
+
+                if cnt == 2 and line[0:2] != "s ":
+                    f.close()
+                    return False
+
+                if cnt == 3:
+                    f.close()
+                    if line[0:2] == "s ":
+                        return True
+                    else:
+                        return False
+
+                cnt += 1
+
+            f.close()
+            return False
+        else:
+            return False
+
+
+    def isBamFile(self, filePath):
+        bgzf_magic = b"\x1f\x8b\x08\x04"
+
+        f = open(filePath, "rb")
+        data = f.read(4)
+        f.close()
+
+        return data == bgzf_magic
+
+
+    def isSamFile(self, filePath):
+        f = open(filePath, "rb")
+        data = f.read(1)
+        if data == "@":
+            tag = f.read(2)
+            if tag == "HD" or tag == "SQ" or tag == "RG" or tag == "CO":
+                f.close()
+                return True
+
+        f.seek(0)
+        data = f.read(1)
+        f.close()
+        if re.match("[\x20-\x7E]", data):
+            f = open(filePath, "r")
+            line = f.readline()
+            f.close()
+            return len(line.split("\t")) > 10
+        else:
+            return False
 
 
     def scriptDir(self):
@@ -182,27 +268,31 @@ class BsfCallBase(object):
         return chrs
 
 
-    def oneChrGenomeSeq(self, refGenome, chrNo):
+    def readRefGenome(self, refGenome, refGenomeBuf, refGenomeChr):
         """
-        get genome sequence of specified chrmosome number.
+        read the reference genome fasta file.
         """
 
-        in_target_chr = False
+        logging.info("BsfCallBase::readRefGenome: %s" % refGenome)
+        chr = None
         buf = []
-        for line in open(refGenome, 'r'):
-            line = line.strip()
-            if line[0] == ">":
-                if in_target_chr:
-                    break
-                else:
-                    cur_chr = self.chrnoFromFastaDescription(line)
-                    if cur_chr == chrNo:
-                        in_target_chr = True
+        fin = open(refGenome, 'r')
+        for line in fin:
+            if line[0] == '>':
+                chr = self.chrnoFromFastaDescription(line)
+                logging.info("BsfCallBase::readRefGenome: chr=%s" % chr)
+                if len(buf) > 0:
+                    refGenomeBuf[refGenomeChr[-1]]=''.join(buf)
+                    del buf[:]
+                refGenomeChr.append(chr)
+            elif chr != None:
+                buf.append(line.strip().upper())
             else:
-                if in_target_chr:
-                    buf.append(line)
-
-        return "".join(buf)
+                logging.fatal("BsfCallBase::readRefGenome: the specified reference genome file \"%s\" is malformed." % refGenome)
+        fin.close()
+        refGenomeBuf[refGenomeChr[-1]]=''.join(buf)
+        logging.info("BsfCallBase::readRefGenome: done.")
+        return
 
 
     def lastalOpts(self, lastOpt):
@@ -281,6 +371,23 @@ class BsfCallBase(object):
             logging.info(cmd)
 
 
+    def bamMapq2Mismap(self, mapq):
+        return pow(0.1, (float(mapq) / 10))
+
+
+    def getAllMappingResultFiles(self, resultDirs):
+        mapping_result_files = []
+
+        for result_dir in resultDirs:
+            for root, dirs, files in os.walk(result_dir):
+                for filename in files:
+                    logging.info("McDetector::getAllMappingResultFiles: %s" % filename)
+                    mapping_result_file = os.path.join(root, filename)
+                    mapping_result_files.append(mapping_result_file)
+        
+        return mapping_result_files
+                        
+
 class BsfCall(BsfCallBase):
     """
     class to execute bsf-call process.
@@ -304,13 +411,16 @@ class BsfCall(BsfCallBase):
         self.readInFh2 = None
         self.numReads = {1: 0, 2: 0}
 
+        self.mappingResultDirs = []
+        self.mappingResultFiles = []
+
         self.setDataDir()
         self.setLogger()
 
         logging.info("bsf-call start.")
         self.logOption()
 
-        self.numReadsPerFile = self.sizeForSplitRead(self.opts["split_read_size"])
+        # self.numReadsPerFile = self.sizeForSplitRead(self.opts["split_read_size"])
 
         if self.opts["mapping_dir"]:
             self.opts["only_mcdetection"] = True
@@ -325,13 +435,17 @@ class BsfCall(BsfCallBase):
 
         try:
             if self.opts["mapping_dir"]:
-                result_dirs = self.opts["mapping_dir"].split(",")
+                # Only mc detection
+                self.mappingResultDirs = self.opts["mapping_dir"].split(",")
+                self.mappingResultFiles = self.getAllMappingResultFiles(self.mappingResultDirs)
+                self.opts["mapping_result_files"] = self.mappingResultFiles
             else:
                 self.makeIndexFile()
-                self.processReads()
-                result_dirs = self.processMapping()
+                self.prepareForReads()
+                self.mappingResultDirs = self.processMapping()
 
-            self.processMcDetection(result_dirs, self.opts["local_dir"])
+            logging.debug("BsfCall:execute: mapping result directories are: %s" % ','.join(self.mappingResultDirs))
+            self.processMcDetection(self.mappingResultDirs, self.opts["local_dir"])
 
             logging.info("bsf-call done.")
         except:
@@ -347,7 +461,7 @@ class BsfCall(BsfCallBase):
 
         result_dirs = []
         for read_attr in self.reads:
-            self.processMappingOneRead(read_attr)
+            self.runLast(read_attr)
             result_dirs.append(read_attr["results_dir"])
 
         logging.info("Mapping and filtering process done.")
@@ -393,6 +507,7 @@ class BsfCall(BsfCallBase):
         """
 
         log_level = logging.INFO
+        # log_level = logging.DEBUG
 
         log_file = "%s/bsf-call.log" % self.dataDir
         file_logger = logging.FileHandler(filename=log_file)
@@ -413,14 +528,16 @@ class BsfCall(BsfCallBase):
             logging.info("Mapping result directory is specified. Only mC detection is executed.")
             logging.info("  Mapping result directory: %s" % self.opts["mapping_dir"])
             logging.info("  Reference genome: %s" % self.refGenome)
+            # logging.info("  Read BAM file: %s" % ("Yes" if self.opts["read_bam"] else "No"))
+            # logging.info("  Read SAM file: %s" % ("Yes" if self.opts["read_sam"] else "No"))
         else:
             logging.info("Reference genome: %s" % self.refGenome)
             logging.info("Read files: %s" % self.readFilePaths)
             logging.info("Working directory: %s" % self.dataDir)
             logging.info("Options:")
             logging.info("  Threshold of the alignment score at filtering: %d" % self.opts["aln_score_thres"])
-            logging.info("  Paired-end direction: %s" % self.opts["pe_direction"])
-            logging.info("  Options for LAST: %s" % self.opts["last_opts"])
+            # logging.info("  Paired-end direction: %s" % self.opts["pe_direction"])
+            # logging.info("  Options for LAST: %s" % self.opts["last_opts"])
 
         logging.info("  Threshold of read coverate: %d" % self.opts["coverage"])
         logging.info("  Threshold of mC ratio: %s" % str(self.opts["lower_bound"]))
@@ -428,112 +545,45 @@ class BsfCall(BsfCallBase):
         logging.info("  Working directory: %s" % self.dataDir)
         logging.info("  Local directory: %s" % self.opts["local_dir"])
         logging.info("  Output file: %s" % (self.opts["output"] if self.opts["output"] else "(stdout)"))
-        logging.info("  Use cluster: %s" % ("Yes" if self.opts["use_cluster"] else "No"))
-        logging.info("  Queue name: %s" % self.opts["queue_list"])
+        # logging.info("  Use cluster: %s" % ("Yes" if self.opts["use_cluster"] else "No"))
+        # logging.info("  Queue name: %s" % self.opts["queue_list"])
         logging.info("  Number of threads: %d" % self.opts["num_threads"])
-        logging.info("  Split read size: %s" % self.opts["split_read_size"])
+        # logging.info("  Split read size: %s" % self.opts["split_read_size"])
 
 
-    def sizeForSplitRead(self, size):
+    def prepareForReads(self):
         """
-        get split read size.
-        """
-
-        unit = size[-1:].upper()
-        if unit == "K":
-            split_size = int(size[0:-1]) * 1000
-        elif unit == "M":
-            split_size = int(size[0:-1]) * 1000 * 1000
-        else:
-            split_size = int(size)
-
-        return split_size
-
-
-    def processReads(self):
-        """
-        process all read files.
+        create directories to store split reads and result files.
         """
 
         for read_no, read_path in enumerate(self.readFilePaths):
-            read = self.processOneRead(read_path, read_no + 1)
+            readNo = read_no + 1
+            logging.info("Preparations for a read file start: %d: %s" % (readNo, read_path))
+
+            data_dir = "%s/%d" % (self.dataDir, readNo)
+            read = {"base_dir": data_dir, "path": read_path, "reads_dir": data_dir + "/reads", "results_dir": data_dir + "/results"}
+
+            if not os.path.exists(data_dir):
+                os.makedirs(data_dir)
+                os.makedirs(read["reads_dir"])
+                os.makedirs(read["results_dir"])
+
+            pe_no = self.pairedEndReadNumbers()[0]
+            for readpath in read_path.split(","):
+                dir_name, file_name, base_name, ext, prog = self.splitFilePath(readpath)
+                file_type = self.checkReadFileType(readpath)
+                read[pe_no] = {"name": base_name, "fname": file_name, "type": file_type, "path": readpath}
+                pe_no += 1
+
+            is_paired_end = self.isPairedEnd(read)
+            logging.info("Paired-end: %s" % is_paired_end)
+            logging.info("  Forward: %s" % read[1]["path"])
+            if is_paired_end:
+                logging.info("  Reverse: %s" % read[2]["path"])
+
+            logging.info("Preparations for a read file done")
             self.reads.append(read)
-
-
-    def processOneRead(self, readPath, readNo):
-        """
-        process one read. do the following:
-        create directories to store the splited read and result files.
-        if read is SRA file, convert to FASTQ file using fastq-dump command.
-        split read file.
-        """
-
-        logging.info("Process read file start: %d: %s" % (readNo, readPath))
-
-        data_dir = "%s/%d"% (self.dataDir, readNo)
-        read = {"base_dir": data_dir, "path": readPath, "reads_dir": data_dir + "/reads", "results_dir": data_dir + "/results"}
-
-        if not os.path.exists(data_dir):
-            os.makedirs(data_dir)
-            os.makedirs(read["reads_dir"])
-            os.makedirs(read["results_dir"])
-
-        pe_no = self.pairedEndReadNumbers()[0]
-        for read_path in readPath.split(","):
-            dir_name, file_name, base_name, ext = self.splitFilePath(read_path)
-            file_type = self.checkReadFileType(read_path)
-            read[pe_no] = {"name": base_name, "fname": file_name, "type": file_type, "path": read_path}
-            pe_no += 1
-
-        if self.isPairedEnd(read):
-            for pe_no in self.pairedEndReadNumbers():
-                if read[pe_no]["type"] == "sra":
-                    self.sra2Fastq(read[pe_no]["path"], data_dir, False)
-                    fastq_fpath = self.fastqDumpedFilePath(data_dir, read[pe_no]["name"])
-                    if os.path.exists(fastq_fpath):
-                        read[pe_no]["name"] = self.readNameByReadFile(fastq_fpath)
-                        read[pe_no]["path"] = fastq_fpath
-                        read[pe_no]["type"] = "fastq"
-                        read[pe_no]["fname"] = os.path.basename(read[pe_no]["path"])
-        else:
-            if read[1]["type"] == "sra":
-                self.sra2Fastq(read[1]["path"], data_dir, True)
-                read_name = read[1]["name"]
-                for pe_no in self.pairedEndReadNumbers():
-                    fastq_fpath = self.fastqDumpedFilePath(data_dir, read_name, pe_no)
-                    if os.path.exists(fastq_fpath):
-                        if not pe_no in read:
-                            read[pe_no] = {}
-                        read[pe_no]["name"] = self.readNameByReadFile(fastq_fpath)
-                        read[pe_no]["path"] = fastq_fpath
-                        read[pe_no]["type"] = "fastq"
-                        read[pe_no]["fname"] = os.path.basename(read[pe_no]["path"])
-
-        is_paired_end = self.isPairedEnd(read)
-        logging.info("Paired-end: %s" % is_paired_end)
-        logging.info("  Forward: %s" % read[1]["path"])
-        if is_paired_end:
-            logging.info("  Reverse: %s" % read[2]["path"])
-
-        self.splitRead(read)
-
-        # gzip FASTQ file which converted from SRA file in background.
-        for dumped_fastq_file in glob.glob("%s/*.fastq" % read["base_dir"]):
-            self.gzipFile(dumped_fastq_file, False)
-
-        logging.info("Process read file done: %d: %s" % (readNo, readPath))
-
-        return read
-
-
-    def processMappingOneRead(self, readAttr):
-        """
-        run mapping and filtering process for one read.
-        """
-
-        logging.info("Target read file: %s" % readAttr["path"])
-
-        self.runLast(readAttr)
+        return
 
 
     def runLast(self, readAttr):
@@ -545,153 +595,15 @@ class BsfCall(BsfCallBase):
         filter_option = self.filterOpts(self.opts["aln_mismap_prob_thres"], self.opts["aln_score_thres"], is_paired_end)
 
         if is_paired_end:
-            last_executor = LastExecutorPairedEnd(self.refGenome, self.dataDir, readAttr["reads_dir"], readAttr["results_dir"])
+            logging.info('BsfCall::runLast: PairedEnd')
+            last_exec = LastExecutorPairedEnd(self.refGenome, self.dataDir, readAttr["reads_dir"], readAttr["results_dir"], self.opts["num_threads"])
         else:
-            last_executor = LastExecutorSingle(self.refGenome, self.dataDir, readAttr["reads_dir"], readAttr["results_dir"])
+            logging.info('BsfCall::runLast: Not PairedEnd')
+            last_exec = LastExecutorSingle(self.refGenome, self.dataDir, readAttr["reads_dir"], readAttr["results_dir"])
 
-        last_executor.execute(readAttr, self.opts["num_threads"], self.lastalOpts(self.opts["last_opts"]), self.mergeOpts(), filter_option)
-
-
-    def sra2Fastq(self, sraFile, outputDir, splitFiles = True):
-        """
-        convert SRA file to FASTQ file.
-        """
-
-        logging.info("Convert SRA file to FASTQ start: %s" % sraFile)
-
-        cmd = "fastq-dump -O %s " % outputDir
-        if splitFiles:
-            cmd += "--split-files "
-        cmd += sraFile
-        logging.info(cmd)
-        p = subprocess.Popen(cmd, shell = True, stdout = subprocess.PIPE, stderr = subprocess.STDOUT)
-        out = p.stdout
-        p.wait()
-        out_data = out.read()
-        if len(out_data) > 0:
-            logging.info(out_data)
-
-        logging.info("Convert SRA file to FASTQ done: %s" % sraFile)
-
-
-    def splitRead(self, readAttr):
-        """
-        split read file.
-        """
-
-        logging.info("Split read file start: %s" % readAttr["path"])
-
-        is_paired_end = self.isPairedEnd(readAttr)
-
-        self.readInFh1 = open(readAttr[1]["path"], "r")
-        if is_paired_end:
-            self.readInFh2 = open(readAttr[2]["path"], "r")
-
-        out_fpath1 = self.splitedReadFilePath(readAttr["reads_dir"], 1, self.numReadsPerFile, 1, readAttr[1]["type"])
-        while self.outputOneSplittedReadFile(self.readInFh1, out_fpath1, readAttr, 1):
-            out_fpath1 = self.splitedReadFilePath(readAttr["reads_dir"], self.numReads[1] + 1, self.numReads[1] + self.numReadsPerFile, 1, readAttr[1]["type"])
-
-        if is_paired_end:
-            out_fpath2 = self.secondReadFilePathByFirstReadFilePath(out_fpath1, readAttr[2]["type"])
-            self.outputOneSplittedReadFile(self.readInFh2, out_fpath2, readAttr, 2)
-            
-        self.readInFh1.close()
-        if is_paired_end:
-            self.readInFh2.close()
-
-        logging.info("Split read file done: %s" % readAttr["path"])
-        logging.info("%s: the number of reads (1st read): %d" % (readAttr[1]["path"], self.numReads[1]))
-        if is_paired_end:
-            logging.info("%s: the number of reads (2nd read): %d" % (readAttr[2]["path"], self.numReads[2]))
-
-        self.readInFh1 = None
-        self.readInFh2 = None
-        self.numReads[1] = 0
-        self.numReads[2] = 0
-
-
-    def outputOneSplittedReadFile(self, fh, outFilePath, readAttr, pairedEndReadNo):
-        """
-        output one splitted read file.
-        """
-
-        if readAttr[pairedEndReadNo]["type"] == "fastq":
-            return self.outputOneSplittedFastqFile(fh, outFilePath, readAttr, pairedEndReadNo)
-        elif readAttr[pairedEndReadNo]["type"] == "fasta":
-            return self.outputOneSplittedFastaFile(fh, outFilePath, readAttr, pairedEndReadNo)
-
-
-    def outputOneSplittedFastqFile(self, fh, outFilePath, readAttr, pairedEndReadNo):
-        """
-        output one splitted FASTQ file.
-        """
-
-        num_lines_per_read = 4
-        line_no = 1
-        out_fh = open(outFilePath, "w")
-        for line in fh:
-            if line_no % num_lines_per_read == 2:
-                line = line.upper().replace("C", "t")
-            out_fh.write(line)
-
-            if line_no % num_lines_per_read == 0:
-                self.numReads[pairedEndReadNo] += 1
-
-            if line_no % (num_lines_per_read * self.numReadsPerFile) == 0:
-                out_fh.close()
-                self.afterProcessSplitRead(outFilePath, readAttr)
-                if self.isPairedEnd(readAttr) and pairedEndReadNo == 1:
-                    out_fpath2 = self.secondReadFilePathByFirstReadFilePath(outFilePath, readAttr[2]["type"])
-                    self.outputOneSplittedReadFile(self.readInFh2, out_fpath2, readAttr, 2)
-
-                return line_no
-
-            line_no += 1
-                
-        self.afterProcessSplitRead(outFilePath, readAttr)
-
-        return None
-
-
-    def outputOneSplittedFastaFile(self, fh, outFilePath, readAttr, pairedEndReadNo):
-        """
-        output one splitted FASTA file.
-        """
-
-        num_reads = 0
-        line_no = 1
-        out_fh = open(outFilePath, "w")
-        for line in fh:
-            if line[0:1] == ">":
-                out_fh.write(line)
-                num_reads += 1
-                self.numReads[pairedEndReadNo] += 1
-            else:
-                line = line.upper().replace("C", "t")
-                out_fh.write(line)
-
-                if num_reads != 0 and num_reads % self.numReadsPerFile == 0:
-                    out_fh.close()
-                    self.afterProcessSplitRead(outFilePath, readAttr)
-                    if self.isPairedEnd(readAttr) and pairedEndReadNo == 1:
-                        out_fpath2 = self.secondReadFilePathByFirstReadFilePath(outFilePath, readAttr[2]["type"])
-                        self.outputOneSplittedReadFile(self.readInFh2, out_fpath2, readAttr, 2)
-                    return line_no
-
-            line_no += 1
-                
-        self.afterProcessSplitRead(outFilePath, readAttr)
-
-        return None
-
-
-                
-    def afterProcessSplitRead(self, readFile, readAttr = None):
-        """
-        this function is called after output splitted one read file.
-        """
-
-        self.gzipFile(readFile, True, True)
+        # last_exec.execute(readAttr, self.opts["num_threads"], self.lastalOpts(self.opts["last_opts"]), self.mergeOpts(), filter_option)
+        # last_exec.execute(readAttr, 1, self.lastalOpts(self.opts["last_opts"]), self.mergeOpts(), filter_option)
+        last_exec.execute(readAttr, 1, "", self.mergeOpts(), filter_option)
 
 
     def makeIndexFile(self):
@@ -778,106 +690,6 @@ class BsfCall(BsfCallBase):
 
         return "%s-%06d-%s" % (now.strftime("%Y%m%d-%H%M%S"), now.microsecond, h[0:16])
         
-
-    def bisulfite_f_seed(self):
-        """
-        output bisulfite_f.seed file.
-        """
-
-        filename = 'bisulfite_f.seed'
-        if not os.path.exists(filename):
-            file = open(filename, "w")
-            file.write("""
-# This subset seed pattern is suitable for aligning forward strands of
-# bisulfite-converted DNA to unconverted DNA.
-CT A G
-CT A G
-CT A G
-CT A G
-CT A G
-CT A G
-CTAG
-CT A G
-CTAG
-CT A G
-CT A G
-CTAG
-CTAG
-""")
-            file.close()
-        return
-
-
-    def bisulfite_r_seed(self):
-        """
-        output bisulfite_r.seed file.
-        """
-
-        filename = 'bisulfite_r.seed'
-        if not os.path.exists(filename):
-            file = open(filename, "w")
-            file.write("""
-# This subset seed pattern is suitable for aligning reverse strands of
-# bisulfite-converted DNA to unconverted DNA.
-AG C T
-AG C T
-AG C T
-AG C T
-AG C T
-AG C T
-AGCT
-AG C T
-AGCT
-AG C T
-AG C T
-AGCT
-AGCT
-""")
-            file.close()
-        return
-
-
-    def bisulfite_f_mat(self):
-        """
-        output bisulfite_f.mat file.
-        """
-
-        filename = 'bisulfite_f.mat'
-        if not os.path.exists(filename):
-            file = open(filename, "w")
-            file.write("""
-# This score matrix is suitable for aligning forward strands of
-# bisulfite-converted DNA queries to unconverted reference sequences.
-    A   C   G   T
-A   6 -18 -18 -18
-C -18   6 -18   3
-G -18 -18   6 -18
-T -18 -18 -18   3
-""")
-            file.close()
-        return
-
-
-    def bisulfite_r_mat(self):
-        """
-        output bisulfite_r.mat file.
-        """
-
-        filename = 'bisulfite_r.mat'
-        if not os.path.exists(filename):
-            file = open(filename, "w")
-            file.write("""
-# This score matrix is suitable for aligning forward strands of
-# bisulfite-converted DNA queries to unconverted reference sequences.
-    A   C   G   T
-A   3 -18 -18 -18
-C -18   6 -18 -18
-G   3 -18   6 -18
-T -18 -18 -18   6
-""")
-            file.close()
-        return
-
 
 class BsfCallCluster(BsfCall):
     """
@@ -970,6 +782,15 @@ class BsfCallCluster(BsfCall):
         argv.append(str(self.opts["lower_bound"]))
         argv.append(str(self.opts["coverage"]))
         argv.append(str(self.opts["aln_mismap_prob_thres"]))
+
+        # if self.opts["read_bam"]:
+        #     argv.append("BAM")
+        # elif self.opts["read_sam"]:
+        #     argv.append("SAM")
+        # else:
+        #     argv.append("MAF")
+        argv.append("MAF")
+            
         if self.opts["local_dir"]:
             argv.append(self.opts["local_dir"])
 
@@ -986,9 +807,9 @@ class BsfCallCluster(BsfCall):
         err_file = os.path.join(self.mcContextDir, "mc-detector-%s.err" % chrNo)
 
         if self.opts["queue_list"]:
-            cmd = "qsub -o %s -e %s -q %s -cwd -b y %s %s" % (out_file, err_file, self.opts["queue_list"], remote_cmd, cmdArgs)
+            cmd = "qsub -o %s -e %s -q %s -pe openmpi %d -cwd -b y %s %s" % (out_file, err_file, self.opts["queue_list"], self.opts['num_threads'], remote_cmd, cmdArgs)
         else:
-            cmd = "qsub -o %s -e %s -cwd -b y %s %s" % (out_file, err_file, remote_cmd, cmdArgs)
+            cmd = "qsub -o %s -e %s -pe openmpi %d -cwd -b y %s %s" % (out_file, err_file, self.opts['num_threads'], remote_cmd, cmdArgs)
 
         return cmd
 
@@ -1016,7 +837,7 @@ class LastExecutor(BsfCallBase):
     class to run LAST programs to map read and filtering.
     """
 
-    def __init__(self, refGenome, baseDir = ".", readsDir = None, resultsDir = None):
+    def __init__(self, refGenome, baseDir = ".", readsDir = None, resultsDir = None, numThreads = 1):
         """
         constructor of LastExecutor
         """
@@ -1027,9 +848,10 @@ class LastExecutor(BsfCallBase):
         self.resultsDir = resultsDir
         self.queue = Queue.Queue()
         self.lock = threading.Lock()
+        self.numThreads = numThreads
 
 
-    def execute(self, readAttr, numThreads, lastalOpts = "", mergeOpts = "", filterOpts = ""):
+    def execute(self, readAttr, numThreads = 1, lastalOpts = "", mergeOpts = "", filterOpts = ""):
         """
         enqueue all splited read files to the queue.
         create and start threads to execute read mapping and filtering process.
@@ -1038,6 +860,12 @@ class LastExecutor(BsfCallBase):
 
         self.enqueue(readAttr)
 
+        if self.queue.qsize()==0:
+            logging.fatal("LastExecutor::execute: Error: queue size=%d" % self.queue.qsize())
+            sys.exit(1)
+
+        logging.info("Queued %d files." % self.queue.qsize())
+
         threads = []
         for i in range(numThreads):
             t = threading.Thread(target=self.worker, args=(readAttr, lastalOpts, mergeOpts, filterOpts))
@@ -1045,8 +873,12 @@ class LastExecutor(BsfCallBase):
             threads.append(t)
             t.start()
 
+        i = 1
         for thread in threads:
+            logging.info("Waiting for %d th thread." % i)
             thread.join()
+            logging.info("Joined %d th thread." % i)
+            i+=1
 
 
     def worker(self, readAttr, lastalOpts, mergeOpts, filterOpts):
@@ -1055,13 +887,12 @@ class LastExecutor(BsfCallBase):
         dequeue read file path from the queue and execute read mapping filtering
         process.
         """
-
-        while True:
-            try:
-                fpath = self.queue.get_nowait()
-                self.runLast(fpath, readAttr, lastalOpts, mergeOpts, filterOpts)
-            except Queue.Empty:
-                break
+        if self.queue.empty():
+            logging.info("LastExecutor::worker: Queue is empty.")
+        while not self.queue.empty():
+            fpath = self.queue.get_nowait()
+            self.runLast(fpath, readAttr, lastalOpts, mergeOpts, filterOpts)
+        return
 
         
     def runLast(self, readFile, readAttr, lastalOpts, mergeOpts, filterOpts, rmInFiles = True):
@@ -1070,12 +901,12 @@ class LastExecutor(BsfCallBase):
         """
 
         cmd = self.batchCmd(readFile, readAttr, lastalOpts, mergeOpts, filterOpts, rmInFiles)
-        logging.debug(cmd)
-        p = subprocess.Popen(cmd, shell = True, stderr = subprocess.PIPE)
-        error = p.stderr
+        logging.info("LastExecutor::runLast: command=%s" % cmd)
+        p = subprocess.Popen(cmd, shell = True, stdout = subprocess.PIPE, stderr = subprocess.PIPE)
+        # out, error = p.communicate()
         p.wait()
 
-        error_msg = error.read()
+        error_msg = p.communicate()[1]
         if len(error_msg) > 0:
             logging.fatal(error_msg)
 
@@ -1085,8 +916,10 @@ class LastExecutor(BsfCallBase):
         enqueue all splitted read files to the queue.
         """
 
-        for read_file in glob.glob("%s/*_1.%s.gz" % (self.readsDir, readAttr[1]["type"])):
-            self.queue.put(read_file)
+        # logging.info("%s/*_1.%s.bz2" % (self.readsDir, readAttr[1]["type"]))
+        # for read_file in glob.glob("%s/*_1.%s" % (self.readsDir, readAttr[1]["type"])):
+        #     self.queue.put(read_file)
+        self.queue.put(readAttr[1]["path"])
 
 
     def lastdb(self, directions, parallel = False):
@@ -1125,57 +958,61 @@ class LastExecutor(BsfCallBase):
         """
         get lastdb command to create index file of reference genome.
         """
+        # return "lastdb -w2 -u bisulfite_%s.seed %s.%s %s" % (direction, self.refGenome, direction, self.refGenome)
+        return "lastdb -uBIS%s %s.%s %s" % (direction.upper(), self.refGenome, direction, self.refGenome)
 
-        return "lastdb -w2 -u bisulfite_%s.seed %s.%s %s" % (direction, self.refGenome, direction, self.refGenome)
 
-
-    def lastalCmd(self, readFile, direction, opts = ""):
+    def lastalBsCmd(self, readFile, opts = ""):
         """
         get lastal command to map read.
         """
-
-        s_opt = self.lastalSopt(direction)
+        # s_opt = self.lastalSopt(direction)
         read_name = self.readNameByReadFile(readFile)
+        return "TMPDIR=%s last-bisulfite.sh %s.%s %s.%s %s > %s" % (self.readsDir, self.refGenome, 'f', self.refGenome, 'r', readFile, self.mappingResultFilePath(read_name))
 
-        return "zcat %s | lastal -p bisulfite_%s.mat %s %s %s.%s - > %s" % (readFile, direction, s_opt, opts, self.refGenome, direction, self.mappingResultFilePath(read_name, direction))
+    def lastalBsPairCmd(self, readFile1, readFile2, opts = ""):
+        """
+        get lastal command to map read.
+        """
+        # s_opt = self.lastalSopt(direction)
+        read_name = self.readNameByReadFile(readFile)
+        return "PARALLEL=-j%d TMPDIR=%s last-bisulfite-pair.sh %s.%s %s.%s %s %s > %s" % (self.numThreads, self.readsDir, self.refGenome, 'f', self.refGenome, 'r', readFile1, readFile2, self.mappingResultFilePath(read_name))
 
 
-    def mergeCmd(self, forwardFile, reverseFile, outputFile, opts = "", rmInFiles = True):
+    # def mergeCmd(self, forwardFile, reverseFile, outputFile, opts = "", rmInFiles = True):
+    def mergeCmd(self, inputFile, outputFile, opts = "", rmInFiles = True):
         """
         get command to merge lastal output.
         """
-
-        cmd = "last-merge-batches %s %s %s > %s" % (opts, forwardFile, reverseFile, outputFile)
+        cmd = "last-merge-batches %s > %s" % (inputFile, outputFile)
         if rmInFiles:
-            cmd += "; rm %s %s" % (forwardFile, reverseFile)
-
+            cmd += "; rm %s" % inputFile
         return cmd
 
 
-    def mappingAndMergeCmd(self, readFile, lastalOpts = "", mergeOpts = "", rmInFiles = True):
+    # def mappingAndMergeCmd(self, readFile, lastalOpts = "", mergeOpts = "", rmInFiles = True):
+    def mappingPairCmd(self, readFile1, readFile2, lastalOpts = "", mergeOpts = "", rmInFiles = True):
         """
         get read mapping and filtering command.
         """
-
         read_name = self.readNameByReadFile(readFile)
         n, ext = os.path.splitext(readFile)
         if ext == ".gz":
             n, ext = os.path.splitext(n)
         lastal_qopt = self.lastalQopt(ext[1:])
         lastal_opt = "%s %s" % (lastalOpts, lastal_qopt)
-        mapping_file_f = self.mappingResultFilePath(read_name, "f")
-        mapping_file_r = self.mappingResultFilePath(read_name, "r")
-        merged_file = self.mergeResultFilePath(read_name)
+        mapping_file = self.mappingResultFilePath(read_name)
 
-        return "%s; %s; %s" % (self.lastalCmd(readFile, "f", lastal_opt), self.lastalCmd(readFile, "r", lastal_opt), self.mergeCmd(mapping_file_f, mapping_file_r, merged_file, mergeOpts, rmInFiles))
+        return self.lastalBsPairCmd(readFile1, readFile2, lastal_opt)
 
 
-    def mappingResultFilePath(self, readName, direction):
+    # def mappingResultFilePath(self, readName, direction):
+    def mappingResultFilePath(self, readName):
         """
         get read mapping result file path.
         """
 
-        return "%s/%s_%s" % (self.resultsDir, readName, direction)
+        return "%s/%s.maf" % (self.resultsDir, readName)
 
 
     def mergeResultFilePath(self, readName):
@@ -1183,7 +1020,7 @@ class LastExecutor(BsfCallBase):
         get merge result file path.
         """
 
-        return "%s/%s" % (self.resultsDir, readName)
+        return "%s/%s.merge.maf" % (self.resultsDir, readName)
 
 
     def filterResultFilePath(self, readName):
@@ -1279,7 +1116,7 @@ class LastExecutorCluster(LastExecutor):
 
         job_id = self.jobIdByQsubOutput(out)
 
-        dir_path, file_name, base_name, ext = self.splitFilePath(readFile)
+        dir_path, file_name, base_name, ext, prog = self.splitFilePath(readFile)
         self.logJobSubmit("Mapping and filtering: read: %s/%s" % (dir_path, base_name[0:-2]), job_id)
 
         return job_id
@@ -1349,20 +1186,20 @@ class LastExecutorSingle(LastExecutor):
         LastExecutor.__init__(self, refGenome, baseDir, readsDir, resultsDir)
 
 
-    def batchCmd(self, readFile, readAttr, lastalOpts = "", mergeOpts = "", filterOpts = "", rmInFiles = True):
+    def batchCmd(self, readFile1, readAttr, lastalOpts = "", mergeOpts = "", filterOpts = "", rmInFiles = True):
         """
         get batch command to map read and filtering.
         """
-
-        read_name = self.readNameByReadFile(readFile)
+        read_name = self.readNameByReadFile(readFile1)
         out_file = self.filterResultFilePath(read_name[0:-2])
-
-        cmds = []
-        cmds.append(self.mappingAndMergeCmd(readFile, lastalOpts, mergeOpts, rmInFiles))
-        cmds.append(self.filterCmd(self.mergeResultFilePath(read_name), out_file, filterOpts, rmInFiles))
-        cmds.append("gzip %s" % out_file)
-
-        return "; ".join(cmds)
+        return "TMPDIR=%s last-bisulfite.sh %s.f %s.r %s > %s/%s.maf" % (self.readsDir, self.refGenome, self.refGenome, readFile1, self.resultsDir, read_name)
+        # cmds = []
+        # cmds.append(self.mappingAndMergeCmd(readFile, lastalOpts, mergeOpts, rmInFiles))
+        # cmds.append(self.mappingPairCmd(readFile1, readFile2, lastalOpts, mergeOpts, rmInFiles))
+        # cmds.append(self.filterCmd(self.mergeResultFilePath(read_name), out_file, filterOpts, rmInFiles))
+        # cmds.append(self.filterCmd(self.mappingResultFilePath(read_name), out_file, filterOpts, rmInFiles))
+        # cmds.append("bzip2 %s" % out_file)
+        # return "; ".join(cmds)
 
 
     def filterCmd(self, inputFile, outputFile, opts = "", rmInFile = True):
@@ -1382,11 +1219,10 @@ class LastExecutorPairedEnd(LastExecutor):
     class to run LAST programs to map paired-end read and filtering.
     """
 
-    def __init__(self, refGenome, baseDir, readsDir, resultsDir):
+    def __init__(self, refGenome, baseDir, readsDir, resultsDir, numThreads):
         """
         constructor of LastExecutorPairedEnd
         """
-
         LastExecutor.__init__(self, refGenome, baseDir, readsDir, resultsDir)
 
 
@@ -1394,23 +1230,16 @@ class LastExecutorPairedEnd(LastExecutor):
         """
         get batch command to map read and filtering.
         """
-
-        read_file2 = self.secondReadFilePathByFirstReadFilePath(readFile1, readAttr[2]["type"])
-        read_files = (readFile1, read_file2)
-
-        filter_cmd_in_file = "%s %s" % (self.mergeResultFilePath(read_files[0]), self.mergeResultFilePath(read_files[1]))
-        read_name1 = self.readNameByReadFile(read_files[0])
-        read_name2 = self.readNameByReadFile(read_files[1])
-        merge_result_file = "%s %s" % (self.mergeResultFilePath(read_name1), self.mergeResultFilePath(read_name2))
-        out_file = self.filterResultFilePath(read_name1[0:-2])
-
-        cmds = []
-        cmds.append(self.mappingAndMergeCmd(read_files[0], lastalOpts, mergeOpts, rmInFiles))
-        cmds.append(self.mappingAndMergeCmd(read_files[1], lastalOpts, mergeOpts, rmInFiles))
-        cmds.append(self.filterCmd(merge_result_file, out_file, filterOpts, rmInFiles))
-        cmds.append("gzip %s" % out_file)
-
-        return "; ".join(cmds)
+        # readFile2 = self.secondReadFilePathByFirstReadFilePath(readFile1, readAttr[2]["type"])
+        # read_name1 = self.readNameByReadFile(readFile1)
+        # read_name2 = self.readNameByReadFile(read_files[1])
+        # merge_result_file = "%s %s" % (self.mergeResultFilePath(read_name1), self.mergeResultFilePath(read_name2))
+        # mapping_result_file = "%s %s" % (self.mappingResultFilePath(read_name1), self.mappingResultFilePath(read_name2))
+        # out_file = self.filterResultFilePath(read_name1[0:-2])
+        # return "TMPDIR=%s last-bisulfite-paired.sh %s.f %s.r %s %s > %s" % (self.baseDir, self.refGenome, self.refGenome, readFile1, readFile2, out_file)
+        read_name1 = self.readNameByReadFile(readAttr[1]["path"])
+        read_name2 = self.readNameByReadFile(readAttr[2]["path"])
+        return "PARALLEL=-j%d TMPDIR=%s last-bisulfite-paired.sh %s.f %s.r %s %s > %s/%s,%s.maf" % (self.numThreads, self.readsDir, self.refGenome, self.refGenome, readAttr[1]["path"], readAttr[2]["path"], self.resultsDir, read_name1, read_name2)
 
 
     def filterCmd(self, inputFile, outputFile, opts = "", rmInFile = True):
@@ -1436,31 +1265,47 @@ class McDetector(BsfCallBase):
         """
 
         self.refGenome = refGenome
-        self.resultDirs = resultDirs
+        self.refGenomeBuf = {}
+        self.refGenomeChr = []
+
+        self.mappingResultDirs = resultDirs
         self.mcContextDir = mcContextDir
         self.lowerBound = options["lower_bound"]
         self.coverageThreshold = options["coverage"]
+        self.onlyMcDetection = options["only_mcdetection"]
 
-        if options["only_mcdetection"]:
+        self.opts = options
+
+        self.mappingResultFiles = []
+
+        if self.onlyMcDetection:
             self.mismapThreshold = options["aln_mismap_prob_thres"]
+            # self.readBam = options["read_bam"]
+            # self.readSam = options["read_sam"]
+            self.readBam = False
+            self.readSam = False
+            if "mapping_result_files" in options:
+                self.mappingResultFiles = options["mapping_result_files"]
+            else:
+                self.mappingResultFiles = self.getAllMappingResultFiles(resultDirs)
         else:
-            self.mismapThreshold = None
+            self.mismapThreshold = 1e-10
+            self.readBam = False
+            self.readSam = False
+            self.mappingResultFiles = self.getAllMappingResultFiles(resultDirs)
 
+        if len(self.mappingResultFiles)==0:
+            logging.fatal("McDetector::__init__: error: no mapping result file found.")
+            sys.exit(1)
+        
         if options["local_dir"]:
             self.localDir = options["local_dir"]
         else:
             self.localDir = mcContextDir
 
-        self.chrs = []
-        self.refGenomeBuf = []
-        self.targetChr = ""
-        self.targetSeqD = ""
-        self.targetSeqC = ""
-        self.targetSeqLen = 0
+        self.readRefGenome(self.refGenome, self.refGenomeBuf, self.refGenomeChr)
 
-        self.mcDetectData = {}
-
-        logging.debug("McDetector.__init__: self.resultDirs: %s" % self.resultDirs)
+        logging.debug("McDetector::__init__: mappingResultDirs=%s" % ','.join(self.mappingResultDirs))
 
 
     def execute(self, outputFile, numWorkers = 1):
@@ -1468,66 +1313,40 @@ class McDetector(BsfCallBase):
         execute mC detection process and output result.
         """
 
-        for line in open(self.refGenome, "r"):
-            line = line.strip()
-            if len(line) == 0:
-                continue;
-            if line[0] == ">":
-                if self.targetChr != "":
-                    self.processOneChr()
-                    self.chrs.append(self.targetChr)
-                self.targetChr = self.chrnoFromFastaDescription(line)
-            else:
-                self.refGenomeBuf.append(line.upper())
-        self.processOneChr()
-        self.chrs.append(self.targetChr)
-
+        self.process()
         self.output(outputFile)
 
 
-    def processOneChr(self, chrNo = None):
+    def process(self):
         """
-        execute mC detection process with specified chromosome number.
+        execute mC detection process.
         """
 
-        if chrNo:
-            self.targetChr = chrNo
+        logging.info("mC detection process start")
 
-        local_dir = "%s/%s" % (self.localDir, self.targetChr)
-        if not os.path.exists(local_dir):
-            os.makedirs(local_dir)
+        if len(self.mappingResultFiles)==0:
+            logging.fatal("McDetector::process: error: no mapping result found.")
+            sys.exit(1)
 
-        if self.refGenomeBuf:
-            self.targetSeqD = "".join(self.refGenomeBuf)
-            del self.refGenomeBuf[:]
-        else:
-            self.targetSeqD = self.oneChrGenomeSeq(self.refGenome, chrNo)
+        for mapping_result_file in self.mappingResultFiles:
+            logging.info("Parsing mapping result file: %s" % mapping_result_file)
+            if self.onlyMcDetection:
+                if not (self.readBam or self.readSam):
+                    if self.isGzipFile(mapping_result_file) or self.isMafFile(mapping_result_file):
+                        self.processMafFile(mapping_result_file)
+                else:
+                    # BAM or SAM
+                    if self.readBam and self.isBamFile(mapping_result_file):
+                        self.processSamFile(mapping_result_file)
+                    elif self.readSam and self.isSamFile(mapping_result_file):
+                        self.processSamFile(mapping_result_file)
+            else:
+                self.processMafFile(mapping_result_file)
 
-        self.targetSeqD = self.targetSeqD.upper()
-        self.targetSeqLen = len(self.targetSeqD)
-        self.targetSeqC = self.complementSeq(self.targetSeqD).upper()
-
-        logging.info("mC detection process start: %s (%d)" % (self.targetChr, self.targetSeqLen))
-        logging.debug("processOneChr: self.resultDirs: %s" % self.resultDirs)
-
-        for result_dir in self.resultDirs:
-            logging.debug("processOneChr: result_dir: %s" % result_dir)
-            for root, dirs, files in os.walk(result_dir):
-                for filename in files:
-                    self.processMappingResultFile(os.path.join(root, filename))
-
-        logging.info("mC detection process done: %s (%d)" % (self.targetChr, self.targetSeqLen))
-
-        logging.info("Output result file start.")
-        self.outputOneChr(self.targetChr)
-        logging.info("Output result file done.")
+        logging.info("Parsing mapping result file done")
 
         if self.mcContextDir != self.localDir:
-            copy(self.mcCotextLocalFilePath(self.targetChr), self.mcContextDir)
-
-        self.targetSeqD = ""
-        self.targetSeqC = ""
-        self.targetSeqLen = 0
+            copy(self.mcContextLocalFilePath(self.targetChr), self.mcContextDir)
 
 
     def output(self, outputFile):
@@ -1535,161 +1354,273 @@ class McDetector(BsfCallBase):
         output mC detection result.
         """
 
-        popen_args = ['cat']
-        for chr in sorted(self.chrs, self.chrSort):
-            result_file = self.mcContextGlobalFilePath(chr)
-            if os.path.exists(result_file) and os.path.getsize(result_file) > 0:
-                popen_args.append(result_file)
-
-        if len(popen_args) == 1:
-            if outputFile:
-                f = open(outputFile, "w")
-                f.close()
-        else:
-            if outputFile:
-                output_fh = open(outputFile, "w")
-            else:
-                output_fh = None
-            subprocess.check_call(popen_args, stdout = output_fh)
-            if output_fh:
-                output_fh.close()
-
-
-    def outputOneChr(self, chrNo):
-        """
-        output mC detection result with specified chromosome number.
-        """
-
-        logging.debug("McDetector.outputOneChr: chr = %s" % chrNo)
-        ctx_dir = "%s/%s" % (self.localDir, chrNo)
-        if os.path.isdir(ctx_dir):
-            for fname in sorted(os.listdir(ctx_dir)):
-                self.outputByOneMcContextFile(chrNo, "%s/%s" % (ctx_dir, fname))
-
-
-    def outputByOneMcContextFile(self, chrNo, fpath):
-        """
-        output mC detection result with specified mC context file.
-        """
-
-        mc_contexts = {}
-        f = open(fpath, "r")
-        for line in f:
-            try:
-                ctx_pos, strand, mc_ctx, base = line.strip().split("\t")
+        logging.info("McDetector::output: outputFile=%s" % outputFile)
+        popen_args = ['sort', '-k1']
+        list = glob.glob("%s/*.bsf" % self.localDir)
+        if len(list)==0:
+            logging.fatal("McDetect::output: no *._bsf_ files found in %s" % self.localDir)
+            sys.exit(1)
+        for bsf_file in list:
+            if os.path.getsize(bsf_file) > 0:
+                popen_args.append(bsf_file)
+                logging.info("McDetector::output: added bsf_file=\"%s\"" % bsf_file)
+        logging.debug("McDetector::output: popen_args=%s" % ' '.join(popen_args))
+        fout = open(outputFile, 'w')
+        if len(popen_args) > 2:
+            pipe = subprocess.Popen(popen_args, stdout=subprocess.PIPE)
+            block = []
+            for line in pipe.stdout:
+                (chr, ctx_pos, strand, mc_ctx, base, conf) = line.strip().split("\t")
                 ctx_pos = int(ctx_pos)
+                conf = float(conf)
+                if len(block)==0 or block[-1][0]==chr:
+                    block.append([chr, ctx_pos, strand, mc_ctx, base, conf])
+                else:
+                    self.outputOneChrBlock(fout, block)
+                    del block[:]
+                    block.append([chr, ctx_pos, strand, mc_ctx, base, conf])
+            if len(block) > 0:
+                self.outputOneChrBlock(fout, block)
+            pipe.stdout.close()
+        else:
+            logging.info("McDetector::output: no result files found.")
+        fout.close()
+
+
+    def outputOneChrBlock(self, fout, block):
+        """
+        output mC detection result for one chromosome.
+        """
+
+        chr = block[0][0]
+        logging.info("McDetector::outputOneChrBlock: chr=%s" % chr)
+        mc_contexts = {}
+        for b in sorted(block, key=lambda block: block[1]):
+            try:
+                ctx_pos, strand, mc_ctx, base, conf = b[1:]
                 if not ctx_pos in mc_contexts:
                     mc_contexts[ctx_pos] = {}
                 if not strand in mc_contexts[ctx_pos]:
                     mc_contexts[ctx_pos][strand] = {}
                 if not mc_ctx in mc_contexts[ctx_pos][strand]:
                     mc_contexts[ctx_pos][strand][mc_ctx] = []
-                mc_contexts[ctx_pos][strand][mc_ctx].append(base)
+                mc_contexts[ctx_pos][strand][mc_ctx].append([base, conf])
             except ValueError, e:
-                logging.warning("ValueError: %s: %s -> %s" % (fpath, line.strip(), e.args[0]))
-        f.close()
+                logging.warning("McDetect::outputOneChrBlock: value error: %s: %s -> %s" % (fpath, line.strip(), e.args[0]))
 
-        out_f = open(self.mcCotextLocalFilePath(chrNo), "a")
-        for pos in sorted(mc_contexts.keys()):
-            for strand in mc_contexts[pos].keys():
-                for mc_ctx in mc_contexts[pos][strand].keys():
-                    coverage, mc_ratio = self.calcCoverage(mc_contexts[pos][strand][mc_ctx])
-                    if coverage >= self.coverageThreshold and mc_ratio >= self.lowerBound:
-                        out_f.write("%s\t%d\t%s\t%s\t%.02f\t%d\n" % (chrNo, pos, strand, mc_ctx, mc_ratio, coverage))
-        out_f.close()
+        num_entry = 0
+        if len(mc_contexts.keys()) > 0:
+            for pos in sorted(mc_contexts.keys()):
+                for strand in mc_contexts[pos].keys():
+                    for mc_ctx in mc_contexts[pos][strand].keys():
+                        coverage, mc_ratio = self.calcCoverage(mc_contexts[pos][strand][mc_ctx], strand)
+                        if coverage >= self.coverageThreshold and mc_ratio >= self.lowerBound:
+                            fout.write("%s\t%d\t%s\t%s\t%g\t%d\n" % (chr, pos, strand, mc_ctx, mc_ratio, coverage))
+                            num_entry += 1
+                        else:
+                            logging.info("McDetect::outputOneChrBlock: rejected: chr=%s pos=%d strand=%s coverage=%g mc_ratio=%g" % (chr, pos, strand, coverage, mc_ratio))
+            # self.bzip2File(fpath, False)
+        logging.info("McDetector::outputOneChrBlock: number of entries %s" % num_entry)
 
-        self.gzipFile(fpath, False)
 
-
-    def processMappingResultFile(self, resultFile):
+    def processMafFile(self, resultFile):
         """
         read mapping result file, and output mC context data file.
         """
 
-        logging.info("Process MAF file start: %s" % resultFile)
-
-        chr_line = True
-        chr = ""
-        f = None
-        has_mismap = True
-        mismap_value = None
-        skip = False
+        file_name = self.splitFilePath(resultFile)[1]
+        outputFile = "%s/%s.bsf" % (self.localDir, file_name)
         try:
-            if self.isGzippedFile(resultFile):
-                f = gzip.open(resultFile, "rb")
+            fin = open(resultFile, 'r')
+            fout = open(outputFile, 'w')
+            block = []
+            for line in fin:
+                if line[0] == '#' or line[0] == 'p' or line[0] == "\n":
+                    continue
+                if line[0] == 'a' or line[0] == 's' or line[0] == 'q':
+                    block.append(line.strip())
+                if len(block)==4:
+                    if block[0][0]=='a' and block[1][0]=='s' and block[2][0]=='s' and block[3][0]=='q':
+                        mismap_prob = float(block[0].split('=')[2])
+                        if mismap_prob <= self.mismapThreshold:
+                            b1 = block[1].split()
+                            chr = b1[1]
+                            ref_seq = b1[-1].upper()
+                            ref_start = int(b1[2]) # 0-based position
+                            read_seq = block[2].split()[-1]
+                            read_len = len(read_seq)
+                            read_qual = block[3].split()[-1]
+                            # strand = self.findStrandFromAlignment(chr, ref_start, read_seq, read_len)
+                            strand = block[2].split()[4]
+                            if strand == '+' or strand == '-':
+                                lines = self.extractMcContextsByOneRead(chr, strand, mismap_prob, ref_seq, ref_start, read_seq, read_qual, read_len)
+                                for line in lines:
+                                    fout.write(line)
+                                logging.debug("processMafFile: a maf block is successfully captured.")
+                            else:
+                                logging.debug("processMafFile: a maf block does not show strand-specific info.")
+                        else:
+                            logging.info("processMafFile: alignment \"%s\" has greater mismap prob. than the threshold." % block[0])
+                        del block[:]
+                    else:
+                        logging.fatal("processMafFile: error: unexpected malformed maf block is found.")
+                        logging.fatal("block 1: \"%s\"\n" % block[0])
+                        logging.fatal("block 2: \"%s\"\n" % block[1])
+                        logging.fatal("block 3: \"%s\"\n" % block[2])
+                        logging.fatal("block 4: \"%s\"\n" % block[3])
+                        sys.exit(1)
+            fin.close()
+            fout.close()
+
+            if len(block) > 0:
+                logging.fatal("McDetect::processMafFile: error: possible malformed MAF file.")
+                for b in block:
+                    logging.fatal(b)
+                sys.exit(1)
+        except IOError:
+            logging.fatal("McDetect::processMafFile: error: unable to read a MAF file \"%s\"" % resultFile)
+            sys.exit(1)
+        return
+     
+
+    def processSamFile(self, samFile):
+        """
+        read mapping BAM/SAM file, and output mC context data file.
+        """
+
+        logging.info("Process BAM/SAM file start: %s" % samFile)
+
+        samfile = None
+        try:
+            if self.readBam:
+                samfile = pysam.Samfile(samFile, "rb")
             else:
-                f = open(resultFile, "r")
+                samfile = pysam.Samfile(samFile, "r")
 
             counter = 1
-            for line in f:
-                tag = line[0]
-                if tag != "s" and tag != "a":
+            for aln in samfile.fetch(until_eof = True):
+                samaln = SamAlnParser(samfile, aln)
+                samaln.setRefGenome(self.targetChr, self.targetSeqD, self.targetSeqLen)
+                samaln.parse()
+
+                chr = samaln.referenceName()
+
+                if (chr is None) or (chr != self.targetChr):
                     continue
 
-                if tag == "s" and skip:
-                    continue
-
-                line = line.strip()
-
-                if tag == "a":
-                    if self.mismapThreshold is not None:
-                        skip = False
-                        mismap_value = self.mafMismapValue(line)
-                        if mismap_value is None:
-                            logging.debug("mismap probability: None")
-                            has_mismap = False
-                        else:
-                            logging.debug("mismap probability: %f" % mismap_value)
-                            if mismap_value - self.mismapThreshold > 0:
-                                skip = True
-                    continue
-
-                tag, name, start, aln_size, strand, seq_size, alignment = line.split()
-                if chr_line:
-                    if name != self.targetChr:
+                if aln.mapq:
+                    mismap = self.bamMapq2Mismap(aln.mapq)
+                    if mismap - self.mismapThreshold > 0:
                         continue
-                    chr = name
-                    gl_alignment = self.clearGap(alignment)
-                    ref_subseqlen = len(gl_alignment)
-                    ref_start = int(start)
-                    ref_seqlen = int(seq_size)
-                    ref_seq = alignment
-                else:
-                    if chr == "":
-                        continue
-                    if strand == "-":
-                        ref_start = self.complementStartPosition(ref_seqlen, ref_start, ref_subseqlen)
-                        ref_seq = self.complementSeq(ref_seq)
-                        alignment = self.complementSeq(alignment)
-                    read_seq = alignment.replace("t", "C")
-                    self.extractMcContextsByOneRead(chr, strand, ref_seq.upper(), ref_start, ref_seqlen, read_seq)
-                    counter += 1
-                    if counter > 500000:
-                        self.outputMcContextData()
-                        counter = 1
 
-                chr_line = not chr_line
-            f.close()
+                read_seq = samaln.alnReadSeq.replace("t", "C")
+                self.extractMcContextsByOneRead(chr, samaln.strand, 0, samaln.alnRefSeq.upper(), samaln.alnRefStart, self.targetSeqLen, read_seq, read_qual)
 
+                counter += 1
+                if counter > 500000:
+                    self.outputMcContextData()
+                    counter = 1
+
+            samfile.close()
             self.outputMcContextData()
-
-            if self.mismapThreshold and not has_mismap:
-                logging.warning("MAF file has no mis-mapping probability.")
-            logging.info("Process MAF file done: %s" % resultFile)
         except Exception, e:
-            logging.fatal(resultFile)
+            logging.fatal(samFile)
             logging.fatal("  %s" % str(type(e)))
             logging.fatal("  %s" % str(e))
-            if f:
-                f.close()
+            if samfile:
+                samfile.close()
 
-
-    def extractMcContextsByOneRead(self, chr, strand, refSeq, refStart, refSeqLen, readSeq):
+    def extractMcContextsByOneRead(self, chr, strand, mismapProb, refSeq, refStart, readSeq, readQual, readLen):
         """
         extract mC context by one read.
         """
 
-        logging.debug("extractMcContextsByOneRead(%s, %s, %s, %d, %d, %s)" % (chr, strand, refSeq, refStart, refSeqLen, readSeq))
+        lines = []
+        if strand == '+':
+            real_pos = refStart
+            for i in range(readLen):
+                if readSeq[i] == '-':
+                    continue
+                # if refSeq[i] == 'C' and (readSeq[i] == 'C' or readSeq[i] == 'T'):
+                if refSeq[i] == 'C':
+                    baseConf = self.qualityCharToErrorProb(readQual[i])
+                    ctx_type = self.mcContextType(self.refGenomeBuf[chr], real_pos, strand)
+                    line = "%s\t%d\t%s\t%s\t%s\t%g\n" % (chr, real_pos, strand, ctx_type, readSeq[i], (1-mismapProb) * (1-baseConf))
+                    # logging.debug("extractMcContextsByOneRead: line=%s" % line)
+                    lines.append(line)
+                real_pos += 1
+        if strand == '-':
+            real_pos = refStart
+            for i in range(readLen):
+                if readSeq[i] == '-':
+                    continue
+                # if refSeq[i] == 'G' and (readSeq[i] == 'G' or readSeq[i] == 'A'):
+                if refSeq[i] == 'G':
+                    baseConf = self.qualityCharToErrorProb(readQual[i])
+                    ctx_type = self.mcContextType(self.refGenomeBuf[chr], real_pos, strand)
+                    read_base = self.complementaryBase(readSeq[i])
+                    line = "%s\t%d\t%s\t%s\t%s\t%g\n" % (chr, real_pos, strand, ctx_type, readSeq[i], (1-mismapProb) * (1-baseConf))
+                    # logging.debug("extractMcContextsByOneRead: line=%s" % line)
+                    lines.append(line)
+                real_pos += 1
+        return lines
+
+
+    def complementaryBase(self, base):
+        """
+        compute a complemetary base.
+        """
+
+        if base == 'A': return 'T'
+        if base == 'C': return 'G'
+        if base == 'G': return 'C'
+        if base == 'T': return 'A'
+        if base == 'N': return 'N'
+        if base == 'a': return 't'
+        if base == 'c': return 'g'
+        if base == 'g': return 'c'
+        if base == 't': return 'a'
+        if base == 'n': return 'n'
+        sys.exit(1)
+
+
+    def findStrandFromAlignment(self, chr, ref_start, read_seq, read_len):
+        plus_sup = 0
+        minus_sup = 0
+        other_mismatch = 0
+        base_size = 0
+        ref_seq = self.refGenomeBuf[chr]
+        for i in range(read_len):
+            j = ref_start + i
+            if ref_seq[j]=='C' and (read_seq[i]=='C' or read_seq[i]=='T'):
+                plus_sup += 1
+                base_size += 1
+            elif ref_seq[j]=='G' and (read_seq[i]=='G' or read_seq[i]=='A'):
+                minus_sup += 1
+                base_size += 1
+            elif (ref_seq[j]!='-' and read_seq[i]!='-') and ref_seq[j]!=read_seq[i]:
+                other_mismatch += 1
+                base_size += 1
+        if base_size==0:
+            return '.'
+        mismatch_rate = float(other_mismatch)/float(base_size)
+        # if plus_sup > minus_sup and plus_sup > other_mismatch:
+        # if plus_sup > minus_sup and mismatch_rate < 0.05:
+        if plus_sup > minus_sup:
+            return '+'
+        # if minus_sup > plus_sup and minus_sup > other_mismatch:
+        # if minus_sup > plus_sup and mismatch_rate < 0.05:
+        if minus_sup > plus_sup:
+            return '-'
+        return '.'
+
+
+    def __extractMcContextsByOneRead(self, chr, strand, mismapProb, refSeq, refStart, refSeqLen, readSeq, readQual):
+        """
+        extract mC context by one read.
+        """
+
+        logging.debug("extractMcContextsByOneRead(%s, %s, %g, %s, %d, %d, %s, %s)" % (chr, strand, mismapProb, refSeq, refStart, refSeqLen, readSeq, readQual))
 
         nogap_refseq = self.clearGap(refSeq)
         bases = list(refSeq)
@@ -1707,6 +1638,8 @@ class McDetector(BsfCallBase):
                         ctx_type = self.mcContextType(self.targetSeqD, ctx_pos)
                     elif strand == "-":
                         ctx_type = self.mcContextType(self.targetSeqC, ctx_pos)
+                if ctx_type == None:
+                    continue
                 if strand == "-":
                     ctx_pos = refSeqLen - ctx_pos - 1
                 line = "%d\t%s\t%s\t%s\n" % (ctx_pos, strand, ctx_type, readSeq[pos])
@@ -1719,6 +1652,11 @@ class McDetector(BsfCallBase):
             except ValueError:
                 break
 
+    def qualityCharToErrorProb(self, qualityChar):
+        """
+        convert FASTQ (Sanger) quality character to error probability.
+        """
+        return 10**((ord('!')-ord(qualityChar))*0.1)
 
     def outputMcContextData(self):
         """
@@ -1756,21 +1694,29 @@ class McDetector(BsfCallBase):
         return seq[0:1].upper() == "T"
 
 
-    def calcCoverage(self, seqAry):
+    def calcCoverage(self, seqAry, strand):
         """
-        count the number of C and T, calculate mC ratio.
+        count the number of C and T (or G and A), calculate mC ratio.
         """
 
-        num_seq = len(seqAry)
-        c_ary = filter(self.isC, seqAry)
-        t_ary = filter(self.isT, seqAry)
-        num_c = len(c_ary)
-        num_t = len(t_ary)
+        num_c = 0.0
+        num_t = 0.0
+        num_all = 0
+        (C, T) = ('C', 'T')
+        if strand == '-':
+            (C, T) = ('G', 'A')
+        for i in seqAry:
+            num_all += 1
+            if i[0] == C:
+                num_c += i[1] 
+            elif i[0] == T:
+                num_t += i[1]
 
-        if num_c + num_t == 0:
-            return (num_seq, 0)
-        else:
-            return (num_seq, float(num_c) / (float(num_c) + float(num_t)))
+        num_ct = num_c + num_t
+        if num_all == 0 or num_ct == 0:
+            return (0, 0)
+        # return (num_all, num_c/num_all)
+        return (num_all, num_c/num_ct)
 
 
     def mafMismapValue(self, aLine):
@@ -1809,7 +1755,7 @@ class McDetector(BsfCallBase):
         return "%010d" % (int(pos) / 100000)
 
 
-    def mcCotextLocalFilePath(self, chrNo):
+    def mcContextLocalFilePath(self, chrNo):
         """
         get local mC context data file path with specified chromosome number.
         """
@@ -1823,4 +1769,100 @@ class McDetector(BsfCallBase):
         """
 
         return "%s/%s.tsv" % (self.mcContextDir, chrNo)
+
+
+class SamAlnParser(BsfCallBase):
+
+    def __init__(self, samfile, aln):
+        self.samfile = samfile
+        self.aln = aln
+
+        self.refName = None
+        self.refSeq = None
+        self.refSeqLen = None
+
+        self.strand = None
+
+        self.alnRefStart = None
+        self.alnRefSeq = None
+        self.alnRefSeqLen = None
+
+        self.alnReadSeq = None
+
+
+    def setRefGenome(self, name, sequence, length = None):
+        if length is None:
+            length = len(sequence)
+
+        self.refName = name
+        self.refSeq = sequence
+        self.refSeqLen = length
+
+
+    def referenceName(self):
+        if self.aln.tid >= 0:
+            return self.samfile.getrname(self.aln.tid)
+        else:
+            return None
+
+
+    def getStrand(self):
+        if self.aln.is_reverse:
+            return "-"
+        else:
+            return "+"
+
+
+    def parseCigar(self, cigar):
+        return [{"op": v[-1:], "num": int(v[:-1])} for v in re.findall('\d+[A-Z=]', cigar)]
+
+
+    def alignmentSequences(self, refSeqPos, readSeq, cigars):
+        refs = []
+        rest_refseq = 0
+
+        reads = []
+        read_pos = 0
+
+        for cigar in cigars:
+            if cigar["op"] == "M":
+                refs.append(self.refSeq[refSeqPos:refSeqPos+cigar["num"]])
+                refSeqPos += cigar["num"]
+                reads.append(readSeq[read_pos:read_pos+cigar["num"]])
+                read_pos += cigar["num"]
+            elif cigar["op"] == "I":
+                refs.append("-" * cigar["num"])
+                reads.append(readSeq[read_pos:read_pos+cigar["num"]])
+                read_pos += cigar["num"]
+            elif cigar["op"] == "P":
+                refs.append("-" * cigar["num"])
+                reads.append("-" * cigar["num"])
+            elif cigar["op"] == "D" or cigar["op"] == "N":
+                rest_refseq += cigar["num"]
+                reads.append("-" * cigar["num"])
+            elif cigar["op"] == "S":
+                read_pos += cigar["num"]
+
+        if rest_refseq > 0:
+            refs.append(self.refSeq[refSeqPos:refSeqPos+rest_refseq])
+
+        return {"reference": "".join(refs), "read": "".join(reads)}
+
+
+    def parse(self):
+        self.strand = self.getStrand()
+
+        self.alnRefStart = self.aln.pos
+        read_seq = self.aln.seq
+        cigars = self.parseCigar(self.aln.cigarstring)
+        alignment = self.alignmentSequences(self.alnRefStart, read_seq, cigars)
+
+        if self.strand == "+":
+            self.alnRefSeq = alignment["reference"]
+            self.alnReadSeq = alignment["read"]
+        elif self.strand == "-":
+            nogap_refseq = self.clearGap(alignment["reference"])
+            self.alnRefStart =  self.complementStartPosition(self.refSeqLen, self.alnRefStart, len(nogap_refseq))
+            self.alnRefSeq = self.complementSeq(alignment["reference"])
+            self.alnReadSeq = self.complementSeq(alignment["read"])
 

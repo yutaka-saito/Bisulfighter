@@ -25,10 +25,6 @@ OPTIONS
 	-o <filename>
 		Specifies the filename for the output (default: STDOUT)
 
-	--last=<opt,opt,...>
-		Specifies options passed to lastal command.
-		"-s" and "-Q" options are automatically specified by bsf-call.
-
 	-W <path>
 		Specifies the working directory (default: ./bsf-call_work ).
 
@@ -37,14 +33,6 @@ OPTIONS
 		MD5HASH part is a MD5 hash value (first 16 columns) computed from values of options and arguments.
 		e.g. 20130130-164854-371195-14a503deb0ef62a5
 		-W option cancels this option.
-
-	-n
-		Lets bsf-call run on parallel job scheduler.
-		Currently Sun Grid Engine is supported.
-		This option cancells -p or --multi-thread.
-
-	-q <queue>, -q <queue>@<hostname>,<queue>@<hostname>,...
-		Specifies queue names used for bsf-call.
 
 	-M <directory>, -M <directory>,<directory>,...
 		Only mC-detection is performed by using mapping results stored in <directory>.
@@ -55,9 +43,6 @@ REQUIRED FILES
 	The following files should stay in the same directory:
 	bsf-call
 	bsfcall.py
-	mapping-p.sh
-	mapping-s.sh
-	mc-detector.py
 
 
 REFERENCE_GENOME
@@ -80,13 +65,13 @@ SEQUENCE_FILES
 EXAMPLES
 
 	Case 1)
-	bsf-call -c 10 -m 0.1 -s 250 -o experiment.txt --last=-d108,-e120,-i1 -W mywork hg19/hg19.fa paired-sample1-1.fastq,paired-sample1-2.fastq single-sample1.fasta
+	bsf-call -p 8 -o result.txt hg19/hg19.fa single-sample1.fasta
 
 	Case 2)
-	bsf-call -n -c 10 -m 0.1 -s 250 -o result.txt --last=-d108,-e120,-i1 -W mywork hg19/hg19.fa paired-sample1-1.fastq,paired-sample1-2.fastq single-sample1.fasta
+	bsf-call -o result.txt hg19/hg19.fa paired-sample1-1.fastq,paired-sample1-2.fastq
 
 	Case 3)
-	bsf-call -n -M mapping_resdir1,mapping_resdir2 -c 10 -m 0.1 -o result.txt -W mywork hg19/hg19.fa
+	bsf-call -o result.txt -M mapping_resdir -o result.txt hg19/hg19.fa
 
 
 
@@ -131,3 +116,4 @@ LICENSE
 	Bisulfighter (http://epigenome.cbrc.jp/bisulfighter) by National Institute of Advanced Industrial Science and Technology (AIST)
 	is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
 	http://creativecommons.org/licenses/by-nc-sa/3.0/
+
