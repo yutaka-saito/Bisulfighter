@@ -8,7 +8,7 @@ is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Un
 http://creativecommons.org/licenses/by-nc-sa/3.0/
 """
 
-__version__= "1.2"
+__version__= "1.3"
 
 import sys
 import os
@@ -1450,13 +1450,19 @@ class McDetector(BsfCallBase):
                             read_seq = block[2].split()[-1]
                             read_len = len(read_seq)
                             read_qual = block[3].split()[-1]
-                            # strand = self.findStrandFromAlignment(chr, ref_start, read_seq, read_len)
-                            strand = block[2].split()[4]
+                            strand = self.findStrandFromAlignment(chr, ref_start, read_seq, read_len)
+                            # strand = block[2].split()[4]
                             if strand == '+' or strand == '-':
                                 lines = self.extractMcContextsByOneRead(chr, strand, mismap_prob, ref_seq, ref_start, read_seq, read_qual, read_len)
                                 for line in lines:
                                     fout.write(line)
-                                logging.debug("processMafFile: a maf block is successfully captured.")
+                                logging.debug("processMafFile: a maf block(%s) is successfully captured." % strand)
+                            elif strand == '+-':
+                                for st in ('+', '-'):
+                                    lines = self.extractMcContextsByOneRead(chr, st, mismap_prob, ref_seq, ref_start, read_seq, read_qual, read_len)
+                                    for line in lines:
+                                        fout.write(line)
+                                logging.debug("processMafFile: a maf block(%s) is successfully captured." % strand)
                             else:
                                 logging.debug("processMafFile: a maf block does not show strand-specific info.")
                         else:
@@ -1592,10 +1598,10 @@ class McDetector(BsfCallBase):
         ref_seq = self.refGenomeBuf[chr]
         for i in range(read_len):
             j = ref_start + i
-            if ref_seq[j]=='C' and (read_seq[i]=='C' or read_seq[i]=='T'):
+            if ref_seq[j]=='C' and read_seq[i]=='T':
                 plus_sup += 1
                 base_size += 1
-            elif ref_seq[j]=='G' and (read_seq[i]=='G' or read_seq[i]=='A'):
+            elif ref_seq[j]=='G' and read_seq[i]=='A':
                 minus_sup += 1
                 base_size += 1
             elif (ref_seq[j]!='-' and read_seq[i]!='-') and ref_seq[j]!=read_seq[i]:
@@ -1612,6 +1618,8 @@ class McDetector(BsfCallBase):
         # if minus_sup > plus_sup and mismatch_rate < 0.05:
         if minus_sup > plus_sup:
             return '-'
+        if plus_sup == minus_sup:
+            return '+-'
         return '.'
 
 

@@ -11,7 +11,7 @@ OPTIONS
 		Specifies the threshold for valid read coverage for mC detection (default: 5).
 
 	-l <float>, --lover-bound=<float>
-		Specifies the threshold for valid mC rate (default: 0.01).
+		Specifies the threshold for valid mC rate (default: 0.05).
 
 	-s <integer>
 		Specifies the threshold for valid alignment score (default: 150)
