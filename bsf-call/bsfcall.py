@@ -1444,13 +1444,16 @@ class McDetector(BsfCallBase):
                         mismap_prob = float(block[0].split('=')[2])
                         if mismap_prob <= self.mismapThreshold:
                             b1 = block[1].split()
+                            b2 = block[2].split()
                             chr = b1[1]
                             ref_seq = b1[-1].upper()
                             ref_start = int(b1[2]) # 0-based position
-                            read_seq = block[2].split()[-1]
-                            read_len = len(read_seq)
+                            ref_len = int(b1[3])
+                            ref_size = int(b1[5])
+                            read_seq = b2[-1]
+                            read_len = int(b2[3])
                             read_qual = block[3].split()[-1]
-                            strand = self.findStrandFromAlignment(chr, ref_start, read_seq, read_len)
+                            strand = self.findStrandFromAlignment(ref_seq, read_seq)
                             # strand = block[2].split()[4]
                             if strand == '+' or strand == '-':
                                 lines = self.extractMcContextsByOneRead(chr, strand, mismap_prob, ref_seq, ref_start, read_seq, read_qual, read_len)
@@ -1466,7 +1469,7 @@ class McDetector(BsfCallBase):
                             else:
                                 logging.debug("processMafFile: a maf block does not show strand-specific info.")
                         else:
-                            logging.info("processMafFile: alignment \"%s\" has greater mismap prob. than the threshold." % block[0])
+                            logging.debug("processMafFile: alignment \"%s\" has greater mismap prob. than the threshold." % block[0])
                         del block[:]
                     else:
                         logging.fatal("processMafFile: error: unexpected malformed maf block is found.")
@@ -1590,21 +1593,19 @@ class McDetector(BsfCallBase):
         sys.exit(1)
 
 
-    def findStrandFromAlignment(self, chr, ref_start, read_seq, read_len):
+    def findStrandFromAlignment(self, ref_seq, read_seq):
         plus_sup = 0
         minus_sup = 0
         other_mismatch = 0
         base_size = 0
-        ref_seq = self.refGenomeBuf[chr]
-        for i in range(read_len):
-            j = ref_start + i
-            if ref_seq[j]=='C' and read_seq[i]=='T':
+        for i in range(len(read_seq)):
+            if ref_seq[i]=='C' and read_seq[i]=='T':
                 plus_sup += 1
                 base_size += 1
-            elif ref_seq[j]=='G' and read_seq[i]=='A':
+            elif ref_seq[i]=='G' and read_seq[i]=='A':
                 minus_sup += 1
                 base_size += 1
-            elif (ref_seq[j]!='-' and read_seq[i]!='-') and ref_seq[j]!=read_seq[i]:
+            elif (ref_seq[i]!='-' and read_seq[i]!='-') and ref_seq[i]!=read_seq[i]:
                 other_mismatch += 1
                 base_size += 1
         if base_size==0:
