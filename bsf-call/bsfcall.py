@@ -1278,20 +1278,16 @@ class McDetector(BsfCallBase):
 
         self.mappingResultFiles = []
 
+        self.mismapThreshold = options["aln_mismap_prob_thres"]
+        self.readBam = False
+        self.readSam = False
+
         if self.onlyMcDetection:
-            self.mismapThreshold = options["aln_mismap_prob_thres"]
-            # self.readBam = options["read_bam"]
-            # self.readSam = options["read_sam"]
-            self.readBam = False
-            self.readSam = False
             if "mapping_result_files" in options:
                 self.mappingResultFiles = options["mapping_result_files"]
             else:
                 self.mappingResultFiles = self.getAllMappingResultFiles(resultDirs)
         else:
-            self.mismapThreshold = 1e-10
-            self.readBam = False
-            self.readSam = False
             self.mappingResultFiles = self.getAllMappingResultFiles(resultDirs)
 
         if len(self.mappingResultFiles)==0:
