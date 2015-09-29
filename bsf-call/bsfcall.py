@@ -1278,6 +1278,7 @@ class McDetector(BsfCallBase):
 
         self.mappingResultFiles = []
 
+        self.scoreThreshold = options["aln_score_thres"]
         self.mismapThreshold = options["aln_mismap_prob_thres"]
         self.readBam = False
         self.readSam = False
@@ -1437,8 +1438,10 @@ class McDetector(BsfCallBase):
                     block.append(line.strip())
                 if len(block)==4:
                     if block[0][0]=='a' and block[1][0]=='s' and block[2][0]=='s' and block[3][0]=='q':
-                        mismap_prob = float(block[0].split('=')[2])
-                        if mismap_prob <= self.mismapThreshold:
+                        factors = block[0].split(' ')
+                        score = float(factors[1].split('=')[-1])
+                        mismap_prob = float(factors[-1].split('=')[-1])
+                        if score >= self.scoreThreshold and mismap_prob <= self.mismapThreshold:
                             b1 = block[1].split()
                             b2 = block[2].split()
                             chr = b1[1]
@@ -1465,7 +1468,10 @@ class McDetector(BsfCallBase):
                             else:
                                 logging.debug("processMafFile: a maf block does not show strand-specific info.")
                         else:
-                            logging.debug("processMafFile: alignment \"%s\" has greater mismap prob. than the threshold." % block[0])
+                            if score < self.scoreThreshold:
+                                logging.debug("processMafFile: alignment \"%s\" has smaller score than the threshold." % block[0])
+                            else:
+                                logging.debug("processMafFile: alignment \"%s\" has greater mismap prob. than the threshold." % block[0])
                         del block[:]
                     else:
                         logging.fatal("processMafFile: error: unexpected malformed maf block is found.")
